@@ -12,6 +12,7 @@ const log = std.log.scoped(.gtk_x11);
 pub const App = struct {
     common: *protocol.App,
     display: *c.Display,
+    kde_blur_atom: c.Atom,
 
     base_event_code: c_int = 0,
 
@@ -28,6 +29,7 @@ pub const App = struct {
         var self: App = .{
             .common = common,
             .display = c.gdk_x11_display_get_xdisplay(common.gdk_display) orelse return,
+            .kde_blur_atom = c.gdk_x11_get_xatom_by_name_for_display(common.gdk_display, "_KDE_NET_WM_BLUR_BEHIND_REGION"),
         };
 
         log.debug("X11 platform init={}", .{self});
@@ -130,6 +132,8 @@ pub const Surface = struct {
     app: *App,
     window: c.Window,
 
+    blur_region: Region,
+
     pub fn init(common: *protocol.Surface) void {
         const surface = c.gtk_native_get_surface(@ptrCast(common.gtk_window)) orelse return;
 
@@ -140,22 +144,80 @@ pub const Surface = struct {
         ) == 0)
             return;
 
+        var blur_region: Region = .{};
+
+        if ((comptime adwaita.versionAtLeast(0, 0, 0)) and common.derived_config.adw_enabled) {
+            // NOTE(pluiedev): CSDs are a f--king mistake.
+            // Please, GNOME, stop this nonsense of making a window ~30% bigger
+            // internally than how they really are just for your shadows and
+            // rounded corners and all that fluff. Please. I beg of you.
+
+            var x: f64, var y: f64 = .{ 0, 0 };
+            c.gtk_native_get_surface_transform(@ptrCast(common.gtk_window), &x, &y);
+            blur_region.x, blur_region.y = .{ @intFromFloat(x), @intFromFloat(y) };
+        }
+
         common.inner = .{ .x11 = .{
             .common = common,
             .app = &common.app.inner.x11,
             .window = c.gdk_x11_surface_get_xid(surface),
+            .blur_region = blur_region,
         } };
     }
 
     pub fn onConfigUpdate(self: *Surface) !void {
-        _ = self;
+        // Whether background blur is enabled could've changed. Update.
+        try self.updateBlur();
     }
 
     pub fn onResize(self: *Surface) !void {
-        _ = self;
+        // The blur region must update with window resizes
+        self.blur_region.width = c.gtk_widget_get_width(@ptrCast(self.common.gtk_window));
+        self.blur_region.height = c.gtk_widget_get_height(@ptrCast(self.common.gtk_window));
+        try self.updateBlur();
     }
 
     fn updateBlur(self: *Surface) !void {
-        _ = self;
+        // FIXME: This doesn't currently factor in rounded corners on Adwaita,
+        // which means that the blur region will grow slightly outside of the
+        // window borders. Unfortunately, actually calculating the rounded
+        // region can be quite complex without having access to existing APIs
+        // (cf. https://github.com/cutefishos/fishui/blob/41d4ba194063a3c7fff4675619b57e6ac0504f06/src/platforms/linux/blurhelper/windowblur.cpp#L134)
+        // and I think it's not really noticable enough to justify the effort.
+        // (Wayland also has this visual artifact anyway...)
+
+        const blur = self.common.derived_config.blur;
+        log.debug("set blur={}, window xid={}, region={}", .{ blur, self.window, self.blur_region });
+
+        if (blur.enabled()) {
+            _ = c.XChangeProperty(
+                self.app.display,
+                self.window,
+                self.app.kde_blur_atom,
+                c.XA_CARDINAL,
+                // Despite what you might think, the "32" here does NOT mean
+                // that the data should be in u32s. Instead, they should be
+                // c_longs, which on any 64-bit architecture would be obviously
+                // 64 bits. WTF?!
+                32,
+                c.PropModeReplace,
+                // SAFETY: Region is an extern struct that has the same
+                // representation of 4 c_longs put next to each other.
+                // Therefore, reinterpretation should be safe.
+                // We don't have to care about endianness either since
+                // Xlib converts it to network byte order for us.
+                @ptrCast(std.mem.asBytes(&self.blur_region)),
+                4,
+            );
+        } else {
+            _ = c.XDeleteProperty(self.app.display, self.window, self.app.kde_blur_atom);
+        }
     }
+};
+
+const Region = extern struct {
+    x: c_long = 0,
+    y: c_long = 0,
+    width: c_long = 0,
+    height: c_long = 0,
 };

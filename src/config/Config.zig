@@ -604,7 +604,7 @@ palette: Palette = .{},
 ///
 /// Supported on macOS and on some Linux desktop environments, including:
 ///
-///   * KDE Plasma (Wayland only)
+///   * KDE Plasma (Wayland and X11)
 ///
 /// Warning: the exact blur intensity is _ignored_ under KDE Plasma, and setting
 /// this setting to either `true` or any positive blur intensity value would
