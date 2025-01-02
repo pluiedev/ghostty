@@ -1,47 +1,59 @@
 /// Utility functions for X11 handling.
 const std = @import("std");
 const build_options = @import("build_options");
-const c = @import("c.zig").c;
-const input = @import("../../input.zig");
+const c = @import("../c.zig").c;
+const input = @import("../../../input.zig");
+const Config = @import("../../../config.zig").Config;
+const protocol = @import("../protocol.zig");
+const adwaita = @import("../adwaita.zig");
 
 const log = std.log.scoped(.gtk_x11);
 
-/// Returns true if the passed in display is an X11 display.
-pub fn is_display(display: ?*c.GdkDisplay) bool {
-    if (comptime !build_options.x11) return false;
-    return c.g_type_check_instance_is_a(
-        @ptrCast(@alignCast(display orelse return false)),
-        c.gdk_x11_display_get_type(),
-    ) != 0;
-}
+pub const App = struct {
+    common: *protocol.App,
+    display: *c.Display,
 
-/// Returns true if the app is running on X11
-pub fn is_current_display_server() bool {
-    if (comptime !build_options.x11) return false;
-    const display = c.gdk_display_get_default();
-    return is_display(display);
-}
-
-pub const Xkb = struct {
-    base_event_code: c_int,
+    base_event_code: c_int = 0,
 
     /// Initialize an Xkb struct for the given GDK display. If the display isn't
     /// backed by X then this will return null.
-    pub fn init(display_: ?*c.GdkDisplay) !?Xkb {
-        if (comptime !build_options.x11) return null;
-
-        // Display should never be null but we just treat that as a non-X11
-        // display so that the caller can just ignore it and not unwrap it.
-        const display = display_ orelse return null;
-
+    pub fn init(common: *protocol.App) !void {
         // If the display isn't X11, then we don't need to do anything.
-        if (!is_display(display)) return null;
+        if (c.g_type_check_instance_is_a(
+            @ptrCast(@alignCast(common.gdk_display)),
+            c.gdk_x11_display_get_type(),
+        ) == 0)
+            return;
 
-        log.debug("Xkb.init: initializing Xkb", .{});
-        const xdisplay = c.gdk_x11_display_get_xdisplay(display);
-        var result: Xkb = .{
-            .base_event_code = 0,
+        var self: App = .{
+            .common = common,
+            .display = c.gdk_x11_display_get_xdisplay(common.gdk_display) orelse return,
         };
+
+        log.debug("X11 platform init={}", .{self});
+
+        // Set the X11 window class property (WM_CLASS) if are are on an X11
+        // display.
+        //
+        // Note that we also set the program name here using g_set_prgname.
+        // This is how the instance name field for WM_CLASS is derived when
+        // calling gdk_x11_display_set_program_class; there does not seem to be
+        // a way to set it directly. It does not look like this is being set by
+        // our other app initialization routines currently, but since we're
+        // currently deriving its value from x11-instance-name effectively, I
+        // feel like gating it behind an X11 check is better intent.
+        //
+        // This makes the property show up like so when using xprop:
+        //
+        //     WM_CLASS(STRING) = "ghostty", "com.mitchellh.ghostty"
+        //
+        // Append "-debug" on both when using the debug build.
+
+        c.g_set_prgname(common.derived_config.x11_program_name);
+        c.gdk_x11_display_set_program_class(common.gdk_display, common.derived_config.app_id);
+
+        // XKB
+        log.debug("Xkb.init: initializing Xkb", .{});
 
         log.debug("Xkb.init: running XkbQueryExtension", .{});
         var opcode: c_int = 0;
@@ -49,9 +61,9 @@ pub const Xkb = struct {
         var major = c.XkbMajorVersion;
         var minor = c.XkbMinorVersion;
         if (c.XkbQueryExtension(
-            xdisplay,
+            self.display,
             &opcode,
-            &result.base_event_code,
+            &self.base_event_code,
             &base_error_code,
             &major,
             &minor,
@@ -62,7 +74,7 @@ pub const Xkb = struct {
 
         log.debug("Xkb.init: running XkbSelectEventDetails", .{});
         if (c.XkbSelectEventDetails(
-            xdisplay,
+            self.display,
             c.XkbUseCoreKbd,
             c.XkbStateNotify,
             c.XkbModifierStateMask,
@@ -72,7 +84,7 @@ pub const Xkb = struct {
             return error.XkbInitializationError;
         }
 
-        return result;
+        common.inner = .{ .x11 = self };
     }
 
     /// Checks for an immediate pending XKB state update event, and returns the
@@ -85,18 +97,13 @@ pub const Xkb = struct {
     /// Returns null if there is no event. In this case, the caller should fall
     /// back to the standard GDK modifier state (this likely means the key
     /// event did not result in a modifier change).
-    pub fn modifier_state_from_notify(self: Xkb, display_: ?*c.GdkDisplay) ?input.Mods {
-        if (comptime !build_options.x11) return null;
-
-        const display = display_ orelse return null;
-
+    pub fn modifierStateFromNotify(self: App) ?input.Mods {
         // Shoutout to Mozilla for figuring out a clean way to do this, this is
         // paraphrased from Firefox/Gecko in widget/gtk/nsGtkKeyUtils.cpp.
-        const xdisplay = c.gdk_x11_display_get_xdisplay(display);
-        if (c.XEventsQueued(xdisplay, c.QueuedAfterReading) == 0) return null;
+        if (c.XEventsQueued(self.display, c.QueuedAfterReading) == 0) return null;
 
         var nextEvent: c.XEvent = undefined;
-        _ = c.XPeekEvent(xdisplay, &nextEvent);
+        _ = c.XPeekEvent(self.display, &nextEvent);
         if (nextEvent.type != self.base_event_code) return null;
 
         const xkb_event: *c.XkbEvent = @ptrCast(&nextEvent);
@@ -115,5 +122,40 @@ pub const Xkb = struct {
         if (lookup_mods & c.LockMask != 0) mods.caps_lock = true;
 
         return mods;
+    }
+};
+
+pub const Surface = struct {
+    common: *protocol.Surface,
+    app: *App,
+    window: c.Window,
+
+    pub fn init(common: *protocol.Surface) void {
+        const surface = c.gtk_native_get_surface(@ptrCast(common.gtk_window)) orelse return;
+
+        // Check if we're actually on X11
+        if (c.g_type_check_instance_is_a(
+            @ptrCast(@alignCast(surface)),
+            c.gdk_x11_surface_get_type(),
+        ) == 0)
+            return;
+
+        common.inner = .{ .x11 = .{
+            .common = common,
+            .app = &common.app.inner.x11,
+            .window = c.gdk_x11_surface_get_xid(surface),
+        } };
+    }
+
+    pub fn onConfigUpdate(self: *Surface) !void {
+        _ = self;
+    }
+
+    pub fn onResize(self: *Surface) !void {
+        _ = self;
+    }
+
+    fn updateBlur(self: *Surface) !void {
+        _ = self;
     }
 };

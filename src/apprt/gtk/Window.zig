@@ -25,7 +25,7 @@ const gtk_key = @import("key.zig");
 const Notebook = @import("notebook.zig").Notebook;
 const HeaderBar = @import("headerbar.zig").HeaderBar;
 const version = @import("version.zig");
-const wayland = @import("wayland.zig");
+const protocol = @import("protocol.zig");
 
 const log = std.log.scoped(.gtk);
 
@@ -56,7 +56,7 @@ toast_overlay: ?*c.GtkWidget,
 /// See adwTabOverviewOpen for why we have this.
 adw_tab_overview_focus_timer: ?c.guint = null,
 
-wayland: ?wayland.SurfaceState,
+protocol: protocol.Surface,
 
 pub fn create(alloc: Allocator, app: *App) !*Window {
     // Allocate a fixed pointer for our window. We try to minimize
@@ -82,7 +82,7 @@ pub fn init(self: *Window, app: *App) !void {
         .notebook = undefined,
         .context_menu = undefined,
         .toast_overlay = undefined,
-        .wayland = null,
+        .protocol = undefined,
     };
 
     // Create the window
@@ -396,14 +396,8 @@ pub fn syncAppearance(self: *Window, config: *const configpkg.Config) !void {
         c.gtk_widget_add_css_class(@ptrCast(self.window), "background");
     }
 
-    if (self.wayland) |*wl| {
-        const blurred = switch (config.@"background-blur-radius") {
-            .false => false,
-            .true => true,
-            .radius => |v| v > 0,
-        };
-        try wl.setBlur(blurred);
-    }
+    // Perform protocol-specific config updates
+    try self.protocol.onConfigUpdate(config);
 }
 
 /// Sets up the GTK actions for the window scope. Actions are how GTK handles
@@ -443,7 +437,7 @@ fn initActions(self: *Window) void {
 pub fn deinit(self: *Window) void {
     c.gtk_widget_unparent(@ptrCast(self.context_menu));
 
-    if (self.wayland) |*wl| wl.deinit();
+    self.protocol.deinit();
 
     if (self.adw_tab_overview_focus_timer) |timer| {
         _ = c.g_source_remove(timer);
@@ -568,9 +562,7 @@ pub fn sendToast(self: *Window, title: [:0]const u8) void {
 fn gtkRealize(v: *c.GtkWindow, ud: ?*anyopaque) callconv(.C) bool {
     const self = userdataSelf(ud.?);
 
-    if (self.app.wayland) |*wl| {
-        self.wayland = wayland.SurfaceState.init(v, wl);
-    }
+    self.protocol.init(v, &self.app.protocol, &self.app.config);
 
     self.syncAppearance(&self.app.config) catch |err| {
         log.err("failed to initialize appearance={}", .{err});
