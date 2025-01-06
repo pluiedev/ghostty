@@ -1384,11 +1384,9 @@ fn gtkResize(area: *c.GtkGLArea, width: c.gint, height: c.gint, ud: ?*anyopaque)
         };
 
         if (self.container.window()) |window| {
-            if (window.winproto) |*winproto| {
-                winproto.resizeEvent() catch |err| {
-                    log.warn("failed to notify window protocol of resize={}", .{err});
-                };
-            }
+            window.winproto.resizeEvent() catch |err| {
+                log.warn("failed to notify window protocol of resize={}", .{err});
+            };
         }
 
         self.resize_overlay.maybeShow();

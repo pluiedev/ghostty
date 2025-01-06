@@ -161,10 +161,12 @@ pub const Window = struct {
 
     const DerivedConfig = struct {
         blur: bool,
+        has_decoration: bool,
 
         pub fn init(config: *const Config) DerivedConfig {
             return .{
                 .blur = config.@"background-blur-radius".enabled(),
+                .has_decoration = config.@"window-decoration" != .false,
             };
         }
     };
@@ -237,6 +239,10 @@ pub const Window = struct {
 
     pub fn syncAppearance(self: *Window) !void {
         try self.syncBlur();
+    }
+
+    pub fn clientSideDecorationEnabled(self: Window) bool {
+        return self.config.has_decoration;
     }
 
     fn syncBlur(self: *Window) !void {

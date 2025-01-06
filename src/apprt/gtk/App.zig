@@ -1864,7 +1864,7 @@ fn initContextMenu(self: *App) void {
         c.g_menu_append(section, "Terminal Inspector", "win.toggle_inspector");
     }
 
-    if (!self.config.@"window-decoration") {
+    if (self.config.@"window-decoration" != .true) {
         const section = c.g_menu_new();
         defer c.g_object_unref(section);
         const submenu = c.g_menu_new();

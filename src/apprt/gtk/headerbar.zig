@@ -18,9 +18,6 @@ pub const HeaderBar = union(enum) {
         } else {
             HeaderBarGtk.init(self);
         }
-
-        if (!window.app.config.@"gtk-titlebar" or !window.app.config.@"window-decoration")
-            self.setVisible(false);
     }
 
     pub fn setVisible(self: HeaderBar, visible: bool) void {

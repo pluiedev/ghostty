@@ -62,7 +62,7 @@ pub const App = union(Protocol) {
 
 /// Per-Window state for the underlying windowing protocol.
 ///
-/// In both X and Wayland, the terminology used is "Surface" and this is
+/// In Wayland, the terminology used is "Surface" and for it, this is
 /// really "Surface"-specific state. But Ghostty uses the term "Surface"
 /// heavily to mean something completely different, so we use "Window" here
 /// to better match what it generally maps to in the Ghostty codebase.
@@ -124,5 +124,11 @@ pub const Window = union(Protocol) {
         switch (self.*) {
             inline else => |*v| try v.syncAppearance(),
         }
+    }
+
+    pub fn clientSideDecorationEnabled(self: Window) bool {
+        return switch (self) {
+            inline else => |v| v.clientSideDecorationEnabled(),
+        };
     }
 };

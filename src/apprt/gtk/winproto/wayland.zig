@@ -18,6 +18,9 @@ pub const App = struct {
 
     const Context = struct {
         kde_blur_manager: ?*org.KdeKwinBlurManager = null,
+
+        // FIXME: replace with `zxdg_decoration_v1` once GTK merges https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/6398
+        kde_decoration_manager: ?*org.KdeKwinServerDecorationManager = null,
     };
 
     pub fn init(
@@ -90,6 +93,15 @@ pub const App = struct {
                     context.kde_blur_manager = blur_manager;
                     break :global;
                 }
+                if (registryBind(
+                    org.KdeKwinServerDecorationManager,
+                    registry,
+                    global,
+                    1,
+                )) |deco_manager| {
+                    context.kde_decoration_manager = deco_manager;
+                    break :global;
+                }
             },
 
             // We don't handle removal events
@@ -130,14 +142,19 @@ pub const Window = struct {
     app_context: *App.Context,
 
     /// A token that, when present, indicates that the window is blurred.
-    blur_token: ?*org.KdeKwinBlur = null,
+    blur_token: ?*org.KdeKwinBlur,
+
+    /// Object that controls the decoration mode (client/server/auto) of the window.
+    decoration: ?*org.KdeKwinServerDecoration,
 
     const DerivedConfig = struct {
         blur: bool,
+        window_decoration: Config.WindowDecoration,
 
         pub fn init(config: *const Config) DerivedConfig {
             return .{
                 .blur = config.@"background-blur-radius".enabled(),
+                .window_decoration = config.@"window-decoration",
             };
         }
     };
@@ -165,16 +182,28 @@ pub const Window = struct {
             gdk_surface,
         ) orelse return error.NoWaylandSurface);
 
+        const decoration = deco: {
+            const mgr = app.context.kde_decoration_manager orelse break :deco null;
+
+            break :deco mgr.create(wl_surface) catch |err| {
+                log.warn("could not create decoration object={}", .{err});
+                break :deco null;
+            };
+        };
+
         return .{
             .config = DerivedConfig.init(config),
             .surface = wl_surface,
             .app_context = app.context,
+            .blur_token = null,
+            .decoration = decoration,
         };
     }
 
     pub fn deinit(self: Window, alloc: Allocator) void {
         _ = alloc;
         if (self.blur_token) |blur| blur.release();
+        if (self.decoration) |deco| deco.release();
     }
 
     pub fn updateConfigEvent(self: *Window, config: *const Config) !void {
@@ -185,6 +214,11 @@ pub const Window = struct {
 
     pub fn syncAppearance(self: *Window) !void {
         try self.syncBlur();
+        try self.syncDecoration();
+    }
+
+    pub fn clientSideDecorationEnabled(self: Window) bool {
+        return self.config.window_decoration == .true or self.decoration == null;
     }
 
     /// Update the blur state of the window.
@@ -206,6 +240,19 @@ pub const Window = struct {
                 tok.commit();
                 self.blur_token = tok;
             }
+        }
+    }
+
+    fn syncDecoration(self: *Window) !void {
+        if (self.decoration) |deco| {
+            const mode: org.KdeKwinServerDecoration.Mode = switch (self.config.window_decoration) {
+                .true => .Client,
+                .server => .Server,
+                .false => .None,
+            };
+
+            // I have no idea why the protocol specifies a `uint` instead of an enum
+            deco.requestMode(@intCast(@intFromEnum(mode)));
         }
     }
 };

@@ -53,4 +53,9 @@ pub const Window = struct {
     pub fn resizeEvent(_: *Window) !void {}
 
     pub fn syncAppearance(_: *Window) !void {}
+
+    pub fn clientSideDecorationEnabled(self: Window) bool {
+        _ = self;
+        return true;
+    }
 };
