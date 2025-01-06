@@ -157,9 +157,6 @@ pub fn init(self: *Window, app: *App) !void {
     if (app.config.@"gtk-titlebar") {
         const header = HeaderBar.init(self);
 
-        // If we are not decorated then we hide the titlebar.
-        header.setVisible(app.config.@"window-decoration");
-
         {
             const btn = c.gtk_menu_button_new();
             c.gtk_widget_set_tooltip_text(btn, "Main Menu");
@@ -211,11 +208,6 @@ pub fn init(self: *Window, app: *App) !void {
     }
 
     _ = c.g_signal_connect_data(gtk_window, "notify::decorated", c.G_CALLBACK(&gtkWindowNotifyDecorated), self, null, c.G_CONNECT_DEFAULT);
-
-    // If we are disabling decorations then disable them right away.
-    if (!app.config.@"window-decoration") {
-        c.gtk_window_set_decorated(gtk_window, 0);
-    }
 
     // If Adwaita is enabled and is older than 1.4.0 we don't have the tab overview and so we
     // need to stick the headerbar into the content box.
@@ -390,14 +382,40 @@ pub fn init(self: *Window, app: *App) !void {
 /// TODO: Many of the initial style settings in `create` could possibly be made
 /// reactive by moving them here.
 pub fn syncAppearance(self: *Window, config: *const configpkg.Config) !void {
-    if (config.@"background-opacity" < 1) {
-        c.gtk_widget_remove_css_class(@ptrCast(self.window), "background");
-    } else {
-        c.gtk_widget_add_css_class(@ptrCast(self.window), "background");
-    }
-
     // Perform protocol-specific config updates
     try self.protocol.onConfigUpdate(config);
+
+    toggleCssClass(
+        @ptrCast(self.window),
+        "background",
+        config.@"background-opacity" >= 1,
+    );
+
+    // If we are disabling CSDs then disable them right away.
+    const csd_enabled = self.protocol.clientSideDecorationEnabled();
+    c.gtk_window_set_decorated(self.window, @intFromBool(csd_enabled));
+
+    // If we are not decorated then we hide the titlebar.
+    if (self.header) |header| {
+        header.setVisible(config.@"gtk-titlebar" and csd_enabled);
+    }
+
+    // Disable the title buttons (close, maximize, minimize, ...)
+    // *inside* the tab overview if CSDs are disabled.
+    // We do spare the search button, though.
+    // (...Why the heck is there a header bar inside the tab overview to begin with??)
+    if (self.tab_overview) |tab_overview| {
+        c.adw_tab_overview_set_show_start_title_buttons(@ptrCast(tab_overview), @intFromBool(csd_enabled));
+        c.adw_tab_overview_set_show_end_title_buttons(@ptrCast(tab_overview), @intFromBool(csd_enabled));
+    }
+}
+
+fn toggleCssClass(widget: *c.GtkWidget, class: [:0]const u8, v: bool) void {
+    if (v) {
+        c.gtk_widget_add_css_class(widget, class);
+    } else {
+        c.gtk_widget_remove_css_class(widget, class);
+    }
 }
 
 /// Sets up the GTK actions for the window scope. Actions are how GTK handles
@@ -526,17 +544,12 @@ pub fn toggleFullscreen(self: *Window) void {
 
 /// Toggle the window decorations for this window.
 pub fn toggleWindowDecorations(self: *Window) void {
-    const old_decorated = c.gtk_window_get_decorated(self.window) == 1;
-    const new_decorated = !old_decorated;
-    c.gtk_window_set_decorated(self.window, @intFromBool(new_decorated));
-
-    // If we have a titlebar, then we also show/hide it depending on the
-    // decorated state. GTK tends to consider the titlebar part of the frame
-    // and hides it with decorations, but libadwaita doesn't. This makes it
-    // explicit.
-    if (self.header) |headerbar| {
-        headerbar.setVisible(new_decorated);
-    }
+    self.app.config.@"window-decoration" = switch (self.app.config.@"window-decoration") {
+        .true => .server,
+        .server => .false,
+        .false => .true,
+    };
+    self.syncAppearance(&self.app.config) catch {};
 }
 
 /// Grabs focus on the currently selected tab.
@@ -576,17 +589,14 @@ fn gtkWindowNotifyDecorated(
     _: *c.GParamSpec,
     _: ?*anyopaque,
 ) callconv(.C) void {
-    if (c.gtk_window_get_decorated(@ptrCast(object)) == 1) {
-        c.gtk_widget_remove_css_class(@ptrCast(object), "ssd");
-        c.gtk_widget_remove_css_class(@ptrCast(object), "no-border-radius");
-    } else {
-        // Fix any artifacting that may occur in window corners. The .ssd CSS
-        // class is defined in the GtkWindow documentation:
-        // https://docs.gtk.org/gtk4/class.Window.html#css-nodes. A definition
-        // for .ssd is provided by GTK and Adwaita.
-        c.gtk_widget_add_css_class(@ptrCast(object), "ssd");
-        c.gtk_widget_add_css_class(@ptrCast(object), "no-border-radius");
-    }
+    const is_decorated = c.gtk_window_get_decorated(@ptrCast(object)) == 1;
+
+    // Fix any artifacting that may occur in window corners. The .ssd CSS
+    // class is defined in the GtkWindow documentation:
+    // https://docs.gtk.org/gtk4/class.Window.html#css-nodes. A definition
+    // for .ssd is provided by GTK and Adwaita.
+    toggleCssClass(@ptrCast(object), "ssd", !is_decorated);
+    toggleCssClass(@ptrCast(object), "no-border-radius", !is_decorated);
 }
 
 // Note: we MUST NOT use the GtkButton parameter because gtkActionNewTab

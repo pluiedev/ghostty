@@ -99,11 +99,13 @@ pub const Surface = struct {
     pub const DerivedConfig = struct {
         blur: Config.BackgroundBlur,
         adw_enabled: bool,
+        window_decoration: Config.WindowDecoration,
 
         pub fn init(config: *const Config) DerivedConfig {
             return .{
                 .blur = config.@"background-blur-radius",
                 .adw_enabled = adwaita.enabled(config),
+                .window_decoration = config.@"window-decoration",
             };
         }
     };
@@ -128,6 +130,17 @@ pub const Surface = struct {
             .wayland => |wl| if (comptime build_options.wayland) wl.deinit() else unreachable,
             .x11, .none => {},
         }
+    }
+
+    pub fn clientSideDecorationEnabled(self: Surface) bool {
+        return switch (self.inner) {
+            // We can't do SSD anyway if the compositor doesn't support it
+            .wayland => |wl| if (comptime build_options.x11)
+                self.derived_config.window_decoration == .true or wl.decoration == null
+            else
+                unreachable,
+            .x11, .none => self.derived_config.window_decoration != .false,
+        };
     }
 
     pub fn onConfigUpdate(self: *Surface, config: *const Config) !void {

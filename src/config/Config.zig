@@ -1110,7 +1110,7 @@ keybind: Keybinds = .{},
 ///
 /// macOS: To hide the titlebar without removing the native window borders
 ///        or rounded corners, use `macos-titlebar-style = hidden` instead.
-@"window-decoration": bool = true,
+@"window-decoration": WindowDecoration = .true,
 
 /// The font that will be used for the application's window and tab titles.
 ///
@@ -5777,6 +5777,27 @@ pub const BackgroundBlur = union(enum) {
         try testing.expectError(error.InvalidValue, v.parseCLI(""));
         try testing.expectError(error.InvalidValue, v.parseCLI("aaaa"));
         try testing.expectError(error.InvalidValue, v.parseCLI("420"));
+    }
+};
+
+/// See window-decoration
+pub const WindowDecoration = enum {
+    true,
+    server,
+    false,
+
+    pub fn parseCLI(input: ?[]const u8) !WindowDecoration {
+        const input_ = input orelse {
+            // Emulate behavior for bools
+            return .true;
+        };
+
+        return if (cli.args.parseBool(input_)) |b|
+            if (b) .true else .false
+        else |_| if (std.mem.eql(u8, input_, "server"))
+            .server
+        else
+            error.InvalidValue;
     }
 };
 

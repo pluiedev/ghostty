@@ -12,7 +12,10 @@ const log = std.log.scoped(.gtk_wayland);
 /// Wayland state that contains application-wide Wayland objects (e.g. wl_display).
 pub const App = struct {
     display: *wl.Display,
+
     blur_manager: ?*org.KdeKwinBlurManager = null,
+    // FIXME: replace with `zxdg_decoration_v1` once GTK merges https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/6398
+    decoration_manager: ?*org.KdeKwinServerDecorationManager = null,
 
     pub fn init(common: *protocol.App) !void {
         // Check if we're actually on Wayland
@@ -45,6 +48,7 @@ pub const Surface = struct {
 
     /// A token that, when present, indicates that the window is blurred.
     blur_token: ?*org.KdeKwinBlur = null,
+    decoration: ?*org.KdeKwinServerDecoration = null,
 
     pub fn init(common: *protocol.Surface) void {
         const surface = c.gtk_native_get_surface(@ptrCast(common.gtk_window)) orelse return;
@@ -56,21 +60,31 @@ pub const Surface = struct {
         ) == 0)
             return;
 
-        const self: Surface = .{
+        var self: Surface = .{
             .common = common,
             .app = &common.app.inner.wayland,
             .surface = @ptrCast(c.gdk_wayland_surface_get_wl_surface(surface) orelse return),
         };
+
+        if (self.app.decoration_manager) |mgr| {
+            if (mgr.create(self.surface)) |deco| {
+                self.decoration = deco;
+            } else |err| {
+                log.warn("could not create decoration object={}", .{err});
+            }
+        }
 
         common.inner = .{ .wayland = self };
     }
 
     pub fn deinit(self: Surface) void {
         if (self.blur_token) |blur| blur.release();
+        if (self.decoration) |deco| deco.release();
     }
 
     pub fn onConfigUpdate(self: *Surface) !void {
         try self.updateBlur();
+        try self.updateDecoration();
     }
 
     fn updateBlur(self: *Surface) !void {
@@ -98,6 +112,18 @@ pub const Surface = struct {
             }
         }
     }
+
+    fn updateDecoration(self: *Surface) !void {
+        if (self.decoration) |deco| {
+            const mode: org.KdeKwinServerDecoration.Mode = switch (self.common.derived_config.window_decoration) {
+                .true => .Client,
+                .server => .Server,
+                .false => .None,
+            };
+
+            deco.requestMode(@intCast(@intFromEnum(mode)));
+        }
+    }
 };
 
 fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, state: *App) void {
@@ -106,6 +132,10 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, state: *Ap
             log.debug("got global interface={s}", .{global.interface});
             if (bindInterface(org.KdeKwinBlurManager, registry, global, 1)) |iface| {
                 state.blur_manager = iface;
+                return;
+            }
+            if (bindInterface(org.KdeKwinServerDecorationManager, registry, global, 1)) |iface| {
+                state.decoration_manager = iface;
                 return;
             }
         },
