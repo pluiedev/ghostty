@@ -7,13 +7,60 @@ const c = @import("../c.zig").c;
 const input = @import("../../../input.zig");
 const Config = @import("../../../config.zig").Config;
 const adwaita = @import("../adwaita.zig");
+const env = @import("../../../os/env.zig");
 
 const log = std.log.scoped(.gtk_x11);
 
 pub const App = struct {
     display: *c.Display,
     base_event_code: c_int,
+    window_manager: WindowManager,
+
     kde_blur_atom: c.Atom,
+    deepin_blur_atom: c.Atom,
+
+    const WindowManager = enum {
+        /// Mutter (mainly used by GNOME and Cinnamon)
+        mutter,
+
+        /// KWin (mainly used by KDE)
+        kwin,
+
+        /// Deepin's fork of KWin
+        deepin_kwin,
+
+        /// Any other unhandled window manager
+        unknown,
+
+        fn detect(alloc: Allocator) WindowManager {
+            // See https://specifications.freedesktop.org/menu-spec/latest/onlyshowin-registry.html
+            const wm_map = std.StaticStringMap(WindowManager).initComptime(&.{
+                .{ "KDE", .kwin },
+                .{ "DDE", .deepin_kwin },
+                .{ "GNOME", .mutter },
+                .{ "Cinnamon", .mutter },
+            });
+
+            const current_desktop = env.getenv(
+                alloc,
+                "XDG_CURRENT_DESKTOP",
+            ) catch return .unknown;
+
+            // This is very silly since Windows won't *ever* reach this code path.
+            // Oh well, it will be optimized out anyway...
+            defer if (current_desktop) |desktop| desktop.deinit(alloc);
+
+            const desktop = current_desktop orelse return .unknown;
+
+            // It's a colon-separated list
+            var iterator = std.mem.splitScalar(u8, desktop.value, ':');
+            while (iterator.next()) |entry| {
+                if (wm_map.get(entry)) |wm| return wm;
+            }
+
+            return .unknown;
+        }
+    };
 
     pub fn init(
         alloc: Allocator,
@@ -21,8 +68,6 @@ pub const App = struct {
         app_id: [:0]const u8,
         config: *const Config,
     ) !?App {
-        _ = alloc;
-
         // If the display isn't X11, then we don't need to do anything.
         if (c.g_type_check_instance_is_a(
             @ptrCast(@alignCast(gdk_display)),
@@ -95,9 +140,15 @@ pub const App = struct {
         return .{
             .display = display,
             .base_event_code = base_event_code,
+            .window_manager = WindowManager.detect(alloc),
+
             .kde_blur_atom = c.gdk_x11_get_xatom_by_name_for_display(
                 gdk_display,
                 "_KDE_NET_WM_BLUR_BEHIND_REGION",
+            ),
+            .deepin_blur_atom = c.gdk_x11_get_xatom_by_name_for_display(
+                gdk_display,
+                "_NET_WM_DEEPIN_BLUR_REGION_ROUNDED",
             ),
         };
     }
@@ -189,6 +240,9 @@ pub const Window = struct {
             if ((comptime !adwaita.versionAtLeast(0, 0, 0)) or
                 !adwaita.enabled(config)) break :blur .{};
 
+            // Apparently this border doesn't exist in Deepin...?
+            if (app.window_manager == .deepin_kwin) break :blur .{};
+
             // NOTE(pluiedev): CSDs are a f--king mistake.
             // Please, GNOME, stop this nonsense of making a window ~30% bigger
             // internally than how they really are just for your shadows and
@@ -241,7 +295,9 @@ pub const Window = struct {
 
     fn syncBlur(self: *Window) !void {
         // FIXME: This doesn't currently factor in rounded corners on Adwaita,
-        // which means that the blur region will grow slightly outside of the
+        // (Except when on Deepin, where rounded blur regions are natively supported.)
+        //
+        // This means that the blur region will grow slightly outside of the
         // window borders. Unfortunately, actually calculating the rounded
         // region can be quite complex without having access to existing APIs
         // (cf. https://github.com/cutefishos/fishui/blob/41d4ba194063a3c7fff4675619b57e6ac0504f06/src/platforms/linux/blurhelper/windowblur.cpp#L134)
@@ -255,32 +311,60 @@ pub const Window = struct {
             self.blur_region,
         });
 
-        if (blur) {
-            _ = c.XChangeProperty(
-                self.app.display,
-                self.window,
-                self.app.kde_blur_atom,
-                c.XA_CARDINAL,
-                // Despite what you might think, the "32" here does NOT mean
-                // that the data should be in u32s. Instead, they should be
-                // c_longs, which on any 64-bit architecture would be obviously
-                // 64 bits. WTF?!
-                32,
-                c.PropModeReplace,
-                // SAFETY: Region is an extern struct that has the same
-                // representation of 4 c_longs put next to each other.
-                // Therefore, reinterpretation should be safe.
-                // We don't have to care about endianness either since
-                // Xlib converts it to network byte order for us.
-                @ptrCast(std.mem.asBytes(&self.blur_region)),
-                4,
-            );
-        } else {
-            _ = c.XDeleteProperty(
-                self.app.display,
-                self.window,
-                self.app.kde_blur_atom,
-            );
+        switch (self.app.window_manager) {
+            .mutter => {
+                // TODO: Support _MUTTER_HINTS & Blur my Shell
+                log.warn("background blur is not available on Mutter (GNOME/Cinnamon)", .{});
+            },
+            .deepin_kwin => if (blur) {
+                _ = c.XChangeProperty(
+                    self.app.display,
+                    self.window,
+                    self.app.deepin_blur_atom,
+                    c.XA_CARDINAL,
+                    // Despite what you might think, the "32" here does NOT mean
+                    // that the data should be in u32s. Instead, they should be
+                    // c_longs, which on any 64-bit architecture would be obviously
+                    // 64 bits. WTF?!
+                    32,
+                    c.PropModeReplace,
+                    // SAFETY: Region is an extern struct that has the same
+                    // representation of 6 c_longs put next to each other.
+                    // Therefore, reinterpretation should be safe.
+                    // We don't have to care about endianness either since
+                    // Xlib converts it to network byte order for us.
+                    @ptrCast(std.mem.asBytes(&self.blur_region)),
+                    6,
+                );
+            } else {
+                _ = c.XDeleteProperty(
+                    self.app.display,
+                    self.window,
+                    self.app.deepin_blur_atom,
+                );
+            },
+            // Maybe there's other WMs out there that support this prop.
+            // Who knows.
+            .kwin, .unknown => if (blur) {
+                _ = c.XChangeProperty(
+                    self.app.display,
+                    self.window,
+                    self.app.kde_blur_atom,
+                    c.XA_CARDINAL,
+                    32,
+                    c.PropModeReplace,
+                    // SAFETY: See comment in Deepin
+                    @ptrCast(std.mem.asBytes(&self.blur_region)),
+                    // KDE doesn't understand the 2 extra blur radius arguments
+                    4,
+                );
+            } else {
+                _ = c.XDeleteProperty(
+                    self.app.display,
+                    self.window,
+                    self.app.kde_blur_atom,
+                );
+            },
         }
     }
 };
@@ -290,4 +374,6 @@ const Region = extern struct {
     y: c_long = 0,
     width: c_long = 0,
     height: c_long = 0,
+    x_radius: c_long = 8,
+    y_radius: c_long = 8,
 };
