@@ -125,6 +125,9 @@ class TerminalManager {
     }
 
     private func newTab(to parent: NSWindow, withBaseConfig base: Ghostty.SurfaceConfiguration?) {
+        // Making sure that we're dealing with a TerminalController
+        guard parent.windowController is TerminalController else { return }
+
         // If our parent is in non-native fullscreen, then new tabs do not work.
         // See: https://github.com/mitchellh/ghostty/issues/392
         if let controller = parent.windowController as? TerminalController,

@@ -47,11 +47,23 @@ pub fn main() !void {
         alloc,
     );
 
-    const term = try compiler.spawnAndWait();
+    const term = compiler.spawnAndWait() catch |err| switch (err) {
+        error.FileNotFound => {
+            std.log.err(
+                \\`blueprint-compiler` not found.
+                \\
+                \\Ghostty requires `blueprint-compiler` as a build-time dependency starting from version 1.2.
+                \\Please install it, ensure that it is available on your PATH, and then retry building Ghostty.
+            , .{});
+            std.posix.exit(1);
+        },
+        else => return err,
+    };
+
     switch (term) {
         .Exited => |rc| {
-            if (rc != 0) std.posix.exit(1);
+            if (rc != 0) std.process.exit(1);
         },
-        else => std.posix.exit(1),
+        else => std.process.exit(1),
     }
 }

@@ -2060,15 +2060,15 @@ keybind: Keybinds = .{},
 ///  * `plastic` - A glossy, dark plastic frame.
 ///  * `chrome` - A shiny chrome frame.
 ///
-/// This only has an effect when `macos-icon` is set to `custom-style`.
+/// Note: This configuration is required when `macos-icon` is set to
+/// `custom-style`.
+///
 @"macos-icon-frame": MacAppIconFrame = .aluminum,
 
 /// The color of the ghost in the macOS app icon.
 ///
 /// Note: This configuration is required when `macos-icon` is set to
 /// `custom-style`.
-///
-/// This only has an effect when `macos-icon` is set to `custom-style`.
 ///
 /// Specified as either hex (`#RRGGBB` or `RRGGBB`) or a named X11 color.
 @"macos-icon-ghost-color": ?Color = null,
@@ -2084,7 +2084,6 @@ keybind: Keybinds = .{},
 /// Note: This configuration is required when `macos-icon` is set to
 /// `custom-style`.
 ///
-/// This only has an effect when `macos-icon` is set to `custom-style`.
 @"macos-icon-screen-color": ?ColorList = null,
 
 /// Put every surface (tab, split, window) into a dedicated Linux cgroup.
