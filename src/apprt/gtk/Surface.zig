@@ -1571,6 +1571,15 @@ fn gtkMouseUp(
     const button = translateMouseButton(gesture.as(gtk.GestureSingle).getCurrentButton());
     const mods = gtk_key.translateMods(gtk_mods);
 
+    // Trigger the on-screen keyboard if we have no selection.
+    //
+    // This cannot be implemented via e.g. bindings or apprt actions
+    // since GTK requires the `event` when triggering the OSK
+    if (button == .left and !self.core_surface.hasSelection()) {
+        const a = self.im_context.as(gtk.IMContext).activateOsk(event);
+        log.debug("tried to trigger on-screen keyboard = {}", .{a != 0});
+    }
+
     _ = self.core_surface.mouseButtonCallback(.release, button, mods) catch |err| {
         log.err("error in key callback err={}", .{err});
         return;
