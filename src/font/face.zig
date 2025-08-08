@@ -8,6 +8,8 @@ const freetype = @import("face/freetype.zig");
 const coretext = @import("face/coretext.zig");
 pub const web_canvas = @import("face/web_canvas.zig");
 
+const sheenbidi = @import("sheenbidi");
+
 /// Face implementation for the compile options.
 pub const Face = switch (options.backend) {
     .freetype,

@@ -129,6 +129,15 @@ pub const Shaper = struct {
         // If our buffer is empty, we short-circuit the rest of the work
         // return nothing.
         if (self.hb_buf.getLength() == 0) return self.cell_buf.items[0..0];
+
+        // Set directionality
+        log.debug("direction = {}", .{run.direction});
+        self.hb_buf.setDirection(switch (run.direction) {
+            .ltr => .ltr,
+            .rtl => .rtl,
+        });
+        // if (run.direction == .rtl) self.hb_buf.reverse();
+
         const info = self.hb_buf.getGlyphInfos();
         const pos = self.hb_buf.getGlyphPositions() orelse return error.HarfbuzzFailed;
 

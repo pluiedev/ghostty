@@ -14,6 +14,7 @@
   pkgs.fontconfig
   pkgs.freetype
   pkgs.harfbuzz
+  pkgs.fribidi
   pkgs.libpng
   pkgs.libxml2
   pkgs.oniguruma

@@ -152,6 +152,10 @@ pub const Buffer = struct {
         return @enumFromInt(c.hb_buffer_get_direction(self.handle));
     }
 
+    pub fn reverse(self: Buffer) void {
+        c.hb_buffer_reverse(self.handle);
+    }
+
     /// Sets the script of buffer to script.
     ///
     /// Script is crucial for choosing the proper shaping behaviour for

@@ -73,6 +73,7 @@
   # developer shell
   glycin-loaders,
   librsvg,
+  fribidi,
 }: let
   # See package.nix. Keep in sync.
   ld_library_path = import ./build-support/ld-library-path.nix {
@@ -120,6 +121,9 @@ in
 
         # Localization
         gettext
+
+        # Bidirectional text
+        fribidi
 
         # CI
         uv

@@ -2437,6 +2437,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 };
                 run_iter_opts.applyBreakConfig(self.config.font_shaping_break);
                 var run_iter = self.font_shaper.runIterator(run_iter_opts);
+                defer run_iter.deinit(self.alloc);
                 var shaper_run: ?font.shape.TextRun = try run_iter.next(self.alloc);
                 var shaper_cells: ?[]const font.shape.Cell = null;
                 var shaper_cells_i: usize = 0;

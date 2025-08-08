@@ -7,6 +7,18 @@ const terminal = @import("../../terminal/main.zig");
 const autoHash = std.hash.autoHash;
 const Hasher = std.hash.Wyhash;
 
+const fribidi = @cImport({
+    @cInclude("fribidi.h");
+});
+
+/// The direction of a text run.
+pub const Direction = enum {
+    /// Left-to-right text
+    ltr,
+    /// Right-to-left text
+    rtl,
+};
+
 /// A single text run. A text run is only valid for one Shaper instance and
 /// until the next run is created. A text run never goes across multiple
 /// rows in a terminal, so it is guaranteed to always be one line.
@@ -30,6 +42,24 @@ pub const TextRun = struct {
 
     /// The font index to use for the glyphs of this run.
     font_index: font.Collection.Index,
+
+    /// The direction of a text run
+    direction: Direction,
+};
+
+// Bidirectional information for each codepoint.
+const Bidi = struct {
+    // We need to use u32 instead of u21 here in order to _ensure_
+    // that it always has the same representation as a FribidiChar
+    codepoint: fribidi.FriBidiChar,
+    visual: fribidi.FriBidiChar,
+    cluster: u32,
+
+    bidi_type: fribidi.FriBidiCharType = 0,
+    bracket_type: fribidi.FriBidiBracketType = 0,
+    level: fribidi.FriBidiLevel = 0,
+    joining_type: fribidi.FriBidiJoiningType = 0,
+    arabic_prop: fribidi.FriBidiArabicProp = 0,
 };
 
 /// RunIterator is an iterator that yields text runs.
@@ -37,6 +67,11 @@ pub const RunIterator = struct {
     hooks: font.Shaper.RunIteratorHook,
     opts: shape.RunOptions,
     i: usize = 0,
+    bidi_buf: std.MultiArrayList(Bidi) = .empty,
+
+    pub fn deinit(self: *RunIterator, alloc: Allocator) void {
+        self.bidi_buf.deinit(alloc);
+    }
 
     pub fn next(self: *RunIterator, alloc: Allocator) !?TextRun {
         const cells = self.opts.row.cells(.all);
@@ -77,7 +112,7 @@ pub const RunIterator = struct {
         // Go through cell by cell and accumulate while we build our run.
         var j: usize = self.i;
         while (j < max) : (j += 1) {
-            const cluster = j;
+            const cluster: u32 = @intCast(j);
             const cell = &cells[j];
 
             // If we have a selection and we're at a boundary point, then
@@ -252,31 +287,113 @@ pub const RunIterator = struct {
             // If we're a fallback character, add that and continue; we
             // don't want to add the entire grapheme.
             if (font_info.fallback) |cp| {
-                try self.addCodepoint(&hasher, cp, @intCast(cluster));
+                try self.addCodepoint(alloc, &hasher, cp, cluster);
                 continue;
             }
 
             // If we're a Kitty unicode placeholder then we add a blank.
             if (cell.codepoint() == terminal.kitty.graphics.unicode.placeholder) {
-                try self.addCodepoint(&hasher, ' ', @intCast(cluster));
+                try self.addCodepoint(alloc, &hasher, ' ', cluster);
                 continue;
             }
 
             // Add all the codepoints for our grapheme
             try self.addCodepoint(
+                alloc,
                 &hasher,
                 if (cell.codepoint() == 0) ' ' else cell.codepoint(),
-                @intCast(cluster),
+                cluster,
             );
             if (cell.hasGrapheme()) {
                 const cps = self.opts.row.grapheme(cell).?;
                 for (cps) |cp| {
                     // Do not send presentation modifiers
                     if (cp == 0xFE0E or cp == 0xFE0F) continue;
-                    try self.addCodepoint(&hasher, cp, @intCast(cluster));
+                    try self.addCodepoint(alloc, &hasher, cp, cluster);
                 }
             }
         }
+
+        // Bidirectional handling
+        // We *assume* most text to be LTR.
+        var base_dir: fribidi.FriBidiParType = fribidi.FRIBIDI_PAR_LTR;
+        const len: c_int = @intCast(self.bidi_buf.len);
+
+        fribidi.fribidi_get_bidi_types(
+            self.bidi_buf.items(.codepoint).ptr,
+            len,
+            self.bidi_buf.items(.bidi_type).ptr,
+        );
+
+        fribidi.fribidi_get_bracket_types(
+            self.bidi_buf.items(.codepoint).ptr,
+            len,
+            self.bidi_buf.items(.bidi_type).ptr,
+            self.bidi_buf.items(.bracket_type).ptr,
+        );
+
+        const max_levels = fribidi.fribidi_get_par_embedding_levels_ex(
+            self.bidi_buf.items(.bidi_type).ptr,
+            self.bidi_buf.items(.bracket_type).ptr,
+            len,
+            &base_dir,
+            self.bidi_buf.items(.level).ptr,
+        );
+
+        // Happy path: if there are no embedding levels
+        // (i.e. the line is entirely written in one direction),
+        // we don't need to reorder at all
+        if (max_levels > 0) {
+            // Arabic shaping
+            fribidi.fribidi_get_joining_types(
+                self.bidi_buf.items(.codepoint).ptr,
+                len,
+                self.bidi_buf.items(.joining_type).ptr,
+            );
+
+            fribidi.fribidi_join_arabic(
+                self.bidi_buf.items(.bidi_type).ptr,
+                len,
+                self.bidi_buf.items(.level).ptr,
+                self.bidi_buf.items(.arabic_prop).ptr,
+            );
+
+            fribidi.fribidi_shape(
+                // fribidi.FRIBIDI_FLAG_SHAPE_ARAB_CONSOLE |
+                fribidi.FRIBIDI_FLAGS_ARABIC,
+                self.bidi_buf.items(.level).ptr,
+                len,
+                self.bidi_buf.items(.arabic_prop).ptr,
+                self.bidi_buf.items(.codepoint).ptr,
+            );
+
+            const result = fribidi.fribidi_reorder_line(
+                fribidi.FRIBIDI_FLAGS_DEFAULT,
+                self.bidi_buf.items(.bidi_type).ptr,
+                len,
+                0,
+                base_dir,
+                self.bidi_buf.items(.level).ptr,
+                self.bidi_buf.items(.visual).ptr,
+                null, // TODO: Use mapping information to remap selections
+            );
+            // TODO: proper error handling
+            assert(result != 0);
+        }
+
+        const par_dir = fribidi.fribidi_get_par_direction(
+            self.bidi_buf.items(.bidi_type).ptr,
+            len,
+        );
+
+        // TODO: Use proper harfbuzz APIs to write it all in one go
+        for (
+            self.bidi_buf.items(.visual),
+            self.bidi_buf.items(.cluster),
+        ) |cp, cluster|
+            try self.hooks.addCodepoint(cp, cluster);
+
+        self.bidi_buf.clearRetainingCapacity();
 
         // Finalize our buffer
         try self.hooks.finalize();
@@ -290,19 +407,24 @@ pub const RunIterator = struct {
         // Move our cursor. Must defer since we use self.i below.
         defer self.i = j;
 
-        return TextRun{
+        return .{
             .hash = hasher.final(),
             .offset = @intCast(self.i),
             .cells = @intCast(j - self.i),
             .grid = self.opts.grid,
             .font_index = current_font,
+            .direction = if (par_dir & fribidi.FRIBIDI_MASK_RTL != 0) .rtl else .ltr,
         };
     }
 
-    fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u32, cluster: u32) !void {
+    fn addCodepoint(self: *RunIterator, alloc: Allocator, hasher: anytype, cp: u32, cluster: u32) !void {
         autoHash(hasher, cp);
         autoHash(hasher, cluster);
-        try self.hooks.addCodepoint(cp, cluster);
+        try self.bidi_buf.append(alloc, .{
+            .codepoint = cp,
+            .cluster = cluster,
+            .visual = cp, // Initialize visual = cp, in case it's entirely RTL or entirely LTR
+        });
     }
 
     /// Find a font index that supports the grapheme for the given cell,

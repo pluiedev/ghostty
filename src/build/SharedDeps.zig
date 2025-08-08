@@ -178,6 +178,9 @@ pub fn add(
         }
     }
 
+    // FriBidi
+    step.linkSystemLibrary2("fribidi", dynamic_link_opts);
+
     // Libpng - Ghostty doesn't actually use this directly, its only used
     // through dependencies, so we only need to add it to our static
     // libs list if we're not using system integration. The dependencies
