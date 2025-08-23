@@ -841,7 +841,10 @@ pub const Application = extern struct {
             defer file.close();
 
             log.info("loading gtk-custom-css path={s}", .{path});
-            const contents = try file.reader().readAllAlloc(
+
+            var buf: [4096]u8 = undefined;
+            var reader = file.reader(&buf);
+            const contents = try reader.interface.readAlloc(
                 alloc,
                 5 * 1024 * 1024, // 5MB,
             );
