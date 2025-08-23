@@ -27,11 +27,13 @@ pub fn run(alloc: std.mem.Allocator) !u8 {
         try args.parse(Options, alloc, &opts, &iter);
     }
 
-    const stdout = std.io.getStdOut().writer();
+    var buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+    const stdout = &stdout_writer.interface;
 
-    var keys = std.ArrayList([]const u8).init(alloc);
-    defer keys.deinit();
-    for (x11_color.map.keys()) |key| try keys.append(key);
+    var keys: std.ArrayList([]const u8) = .empty;
+    defer keys.deinit(alloc);
+    for (x11_color.map.keys()) |key| try keys.append(alloc, key);
 
     std.mem.sortUnstable([]const u8, keys.items, {}, struct {
         fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
@@ -49,5 +51,7 @@ pub fn run(alloc: std.mem.Allocator) !u8 {
         });
     }
 
+    // Don't forget to flush!
+    try stdout.flush();
     return 0;
 }
