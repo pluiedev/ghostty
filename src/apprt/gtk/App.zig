@@ -101,7 +101,7 @@ transient_cgroup_base: ?[]const u8 = null,
 css_provider: *gtk.CssProvider,
 
 /// Providers for loading custom stylesheets defined by user
-custom_css_providers: std.ArrayListUnmanaged(*gtk.CssProvider) = .{},
+custom_css_providers: std.ArrayList(*gtk.CssProvider) = .{},
 
 global_shortcuts: ?GlobalShortcuts,
 
@@ -1189,7 +1189,7 @@ fn loadRuntimeCss(
 ) Allocator.Error!void {
     const alloc = self.core_app.alloc;
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
 
     const writer = buf.writer(alloc);
