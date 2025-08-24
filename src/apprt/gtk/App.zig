@@ -230,7 +230,7 @@ pub fn init(self: *App, core_app: *CoreApp, opts: Options) !void {
 
     {
         var buf: [128]u8 = undefined;
-        var fmt = std.io.fixedBufferStream(&buf);
+        var fmt = std.Io.fixedBufferStream(&buf);
         const writer = fmt.writer();
         var first: bool = true;
         inline for (@typeInfo(@TypeOf(gdk_debug)).@"struct".fields) |field| {
@@ -248,7 +248,7 @@ pub fn init(self: *App, core_app: *CoreApp, opts: Options) !void {
 
     {
         var buf: [128]u8 = undefined;
-        var fmt = std.io.fixedBufferStream(&buf);
+        var fmt = std.Io.fixedBufferStream(&buf);
         const writer = fmt.writer();
         var first: bool = true;
         inline for (@typeInfo(@TypeOf(gdk_disable)).@"struct".fields) |field| {
