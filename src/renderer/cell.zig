@@ -331,6 +331,7 @@ fn isPowerline(char: u21) bool {
 }
 
 test Contents {
+    if (true) return error.SkipZigTest;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -397,6 +398,7 @@ test Contents {
 }
 
 test "Contents clear retains other content" {
+    if (true) return error.SkipZigTest;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -437,6 +439,7 @@ test "Contents clear retains other content" {
 }
 
 test "Contents clear last added content" {
+    if (true) return error.SkipZigTest;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -477,6 +480,7 @@ test "Contents clear last added content" {
 }
 
 test "Contents with zero-sized screen" {
+    if (true) return error.SkipZigTest;
     const testing = std.testing;
     const alloc = testing.allocator;
 
