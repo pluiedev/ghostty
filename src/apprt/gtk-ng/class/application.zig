@@ -142,7 +142,7 @@ pub const Application = extern struct {
         css_provider: *gtk.CssProvider,
 
         /// Providers for loading custom stylesheets defined by user
-        custom_css_providers: std.ArrayListUnmanaged(*gtk.CssProvider) = .empty,
+        custom_css_providers: std.ArrayList(*gtk.CssProvider) = .empty,
 
         pub var offset: c_int = 0;
     };
@@ -718,7 +718,7 @@ pub const Application = extern struct {
     ) Allocator.Error!void {
         const alloc = self.allocator();
 
-        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(alloc);
 
         const writer = buf.writer(alloc);
