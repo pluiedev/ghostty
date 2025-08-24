@@ -95,7 +95,7 @@ pub fn main() !void {
         }
     }
 
-    const writer = std.io.getStdOut().writer();
+    const writer = std.Io.getStdOut().writer();
 
     try writer.writeAll(
         \\<?xml version="1.0" encoding="UTF-8"?>
