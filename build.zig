@@ -83,27 +83,27 @@ pub fn build(b: *std.Build) !void {
         &deps,
     );
 
-    // Runtime "none" is libghostty, anything else is an executable.
-    if (config.app_runtime != .none) {
-        if (config.emit_exe) {
+    if (config.emit_exe) {
+        // Runtime "none" is libghostty, anything else is an executable.
+        if (config.app_runtime != .none) {
             exe.install();
             resources.install();
             if (i18n) |v| v.install();
-        }
-    } else {
-        // Libghostty
-        //
-        // Note: libghostty is not stable for general purpose use. It is used
-        // heavily by Ghostty on macOS but it isn't built to be reusable yet.
-        // As such, these build steps are lacking. For example, the Darwin
-        // build only produces an xcframework.
+        } else {
+            // Libghostty
+            //
+            // Note: libghostty is not stable for general purpose use. It is used
+            // heavily by Ghostty on macOS but it isn't built to be reusable yet.
+            // As such, these build steps are lacking. For example, the Darwin
+            // build only produces an xcframework.
 
-        // We shouldn't have this guard but we don't currently
-        // build on macOS this way ironically so we need to fix that.
-        if (!config.target.result.os.tag.isDarwin()) {
-            libghostty_shared.installHeader(); // Only need one header
-            libghostty_shared.install("libghostty.so");
-            libghostty_static.install("libghostty.a");
+            // We shouldn't have this guard but we don't currently
+            // build on macOS this way ironically so we need to fix that.
+            if (!config.target.result.os.tag.isDarwin()) {
+                libghostty_shared.installHeader(); // Only need one header
+                libghostty_shared.install("libghostty.so");
+                libghostty_static.install("libghostty.a");
+            }
         }
     }
 
