@@ -65,8 +65,12 @@
     # we need to limit the attributes we expose.
     buildablePlatforms = lib.filter (p: !(lib.systems.elaborate p).isDarwin) platforms;
 
-    forAllPlatforms = f: lib.genAttrs platforms (s: f legacyPackages.${s});
-    forBuildablePlatforms = f: lib.genAttrs buildablePlatforms (s: f legacyPackages.${s});
+    nixpkgs' = system: import nixpkgs {
+      inherit system;
+      overlays = [(import ./nix/overlay.nix)];
+    };
+    forAllPlatforms = f: lib.genAttrs platforms (s: f (nixpkgs' s));
+    forBuildablePlatforms = f: lib.genAttrs buildablePlatforms (s: f (nixpkgs' s));
 
     mkPkgArgs = optimize: {
       inherit optimize;
