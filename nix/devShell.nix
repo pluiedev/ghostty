@@ -49,6 +49,8 @@
   adwaita-icon-theme,
   hicolor-icon-theme,
   harfbuzz,
+  libglvnd,
+  libgbm,
   libpng,
   libxkbcommon,
   libX11,
@@ -185,6 +187,8 @@ in
         glslang
         spirv-cross
 
+        libglvnd
+        libgbm
         libxkbcommon
         libX11
         libXcursor
