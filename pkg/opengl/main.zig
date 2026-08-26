@@ -39,6 +39,7 @@ pub const drawElementsInstanced = draw.drawElementsInstanced;
 pub const enable = draw.enable;
 pub const disable = draw.disable;
 pub const frontFace = draw.frontFace;
+pub const readPixels = draw.readPixels;
 pub const pixelStore = draw.pixelStore;
 pub const viewport = draw.viewport;
 pub const flush = draw.flush;
