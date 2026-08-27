@@ -621,9 +621,7 @@ pub const Surface = extern struct {
         /// shows up taking the full bounds of a split view.
         zoom: bool = false,
 
-        /// The RenderSurface that displays the rendered output of the
-        /// surface. This is a binding to the template so it doesn't have
-        /// to be unrefed manually.
+        /// The RenderSurface that displays the rendered output of the surface.
         render_surface: *RenderSurface,
 
         /// The labels for the left/right sides of the URL hover tooltip.
@@ -642,15 +640,12 @@ pub const Surface = extern struct {
         /// The apprt Surface.
         rt_surface: ApprtSurface = undefined,
 
-        /// The core surface backing this GTK surface. This starts out
-        /// null because it can't be initialized until there is an available
-        /// GLArea that is realized.
-        //
-        // NOTE(mitchellh): This is a limitation we should definitely remove
-        // at some point by modifying our OpenGL renderer for GTK to
-        // start in an unrealized state. There are other benefits to being
-        // able to initialize the surface early so we should aim for that,
-        // eventually.
+        /// The core surface backing this GTK surface.
+        ///
+        /// This starts out null and unrealized and is initialized eagerly
+        /// when we get our first resize event, since we don't know what
+        /// size GTK will allocate for this widget beforehand. This will
+        /// then be realized when the widget itself is realized.
         core_surface: ?*CoreSurface = null,
 
         /// Cached metrics for libghostty callbacks
@@ -1601,8 +1596,8 @@ pub const Surface = extern struct {
         const priv = self.private();
         // By the time this is called, we should be in a widget tree.
         // This should not be called before that. We ensure this by initializing
-        // the surface in `glareaResize`. This is VERY important because it
-        // avoids the pty having an incorrect initial size.
+        // the surface in `renderSurfaceResize`. This is VERY important because
+        // it avoids the pty having an incorrect initial size.
         assert(priv.size.width >= 0 and priv.size.height >= 0);
         return priv.size;
     }
@@ -3322,25 +3317,13 @@ pub const Surface = extern struct {
     ) callconv(.c) void {
         log.debug("render surface realize", .{});
 
-        // The RenderSurface has no GL context; the renderer's EGL context
-        // manages all GPU resources. We just notify the core surface that
-        // the widget is realized (has a valid GDK surface with a real size)
-        // so it can begin rendering.
+        // Notify our core surface that it should realize.
         const priv = self.private();
-        if (priv.core_surface) |v| realize: {
+        if (priv.core_surface) |v| {
             v.displayRealized() catch |err| {
                 log.warn("core displayRealized failed err={}", .{err});
-                break :realize;
             };
-
             self.redraw();
-        } else {
-            // Lazily initialize the core surface and renderer on first
-            // realization. This must happen here (not in size_allocate)
-            // because we need a valid GDK surface to create the EGL context.
-            self.initSurface() catch |err| {
-                log.warn("surface failed to initialize err={}", .{err});
-            };
         }
 
         // Setup our input method. We do this here because this will
@@ -3438,7 +3421,7 @@ pub const Surface = extern struct {
         const changed = !priv.size.eql(&new_size);
         priv.size = new_size;
 
-        // If our surface is realize, we send callbacks.
+        // If our surface is initialized, we send callbacks.
         if (priv.core_surface) |surface| {
             // We also update the content scale because there is no signal for
             // content scale change and it seems to trigger a resize event.
@@ -3453,14 +3436,18 @@ pub const Surface = extern struct {
                 // Setup our resize overlay if configured
                 self.resizeOverlaySchedule();
             }
-
-            return;
+        } else {
+            // If we haven't initalized a surface yet, now's the time to
+            // do so. We cannot do this any earlier since GTK defers the
+            // layouting and size allocation until after widget initialization.
+            // Note that initialization is different from realization:
+            // `initSurface` will start the core surface in an unrealized
+            // state and wait for the `realize` signal, unless the widget
+            // is somehow realized before the first resize signal ever fires.
+            self.initSurface() catch |err| {
+                log.warn("surface failed to initialize err={}", .{err});
+            };
         }
-
-        // If we don't have a surface, then we initialize it.
-        self.initSurface() catch |err| {
-            log.warn("surface failed to initialize err={}", .{err});
-        };
     }
 
     const InitError = Allocator.Error || error{
@@ -3530,6 +3517,13 @@ pub const Surface = extern struct {
         // Give the render surface a pointer to the core surface so it
         // can pull presents from the renderer in its snapshot handler.
         priv.render_surface.setCoreSurface(surface);
+
+        // If the widget isn't realized yet, start the renderer in an
+        // unrealized state so it waits for `displayRealized` (called from
+        // `renderSurfaceRealize`) before building GPU resources.
+        if (priv.render_surface.as(gtk.Widget).getRealized() == 0) {
+            surface.displayUnrealized();
+        }
 
         // Emit the signal that we initialized the surface.
         Surface.signals.init.impl.emit(
