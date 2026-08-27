@@ -985,6 +985,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             latest: ?ExportedFrame = null,
 
             pub fn push(self: *LatestFrame, io: std.Io, value: ExportedFrame) void {
+                if (comptime ExportedFrame == void) return;
+
                 self.mutex.lockUncancelable(io);
                 defer self.mutex.unlock(io);
                 if (self.latest) |*old| old.deinit();
@@ -992,6 +994,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             pub fn take(self: *LatestFrame, io: std.Io) ?ExportedFrame {
+                if (comptime ExportedFrame == void) return null;
+
                 self.mutex.lockUncancelable(io);
                 defer self.mutex.unlock(io);
                 const result = self.latest orelse return null;
@@ -1000,6 +1004,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             pub fn deinit(self: *LatestFrame, io: std.Io) void {
+                if (comptime ExportedFrame == void) return;
+
                 self.mutex.lockUncancelable(io);
                 defer self.mutex.unlock(io);
                 if (self.latest) |*v| v.deinit();
