@@ -1876,8 +1876,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .ready => |texture| pass.step(.{
                         .pipeline = self.shaders.pipelines.bg_image,
                         .uniforms = frame.uniforms.buffer,
-                        .buffers = &.{frame.bg_image_buffer.buffer},
-                        .textures = &.{texture},
+                        .vertices = frame.bg_image_buffer.buffer,
+                        .textures = .{ .image = texture },
                         .draw = .{ .type = .triangle, .vertex_count = 3 },
                     }),
                     else => {},
@@ -1885,7 +1885,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     pass.step(.{
                         .pipeline = self.shaders.pipelines.bg_color,
                         .uniforms = frame.uniforms.buffer,
-                        .buffers = &.{ null, frame.cells_bg.buffer },
+                        .bg_cells = frame.cells_bg.buffer,
                         .draw = .{ .type = .triangle, .vertex_count = 3 },
                     });
                 }
@@ -1903,7 +1903,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 pass.step(.{
                     .pipeline = self.shaders.pipelines.cell_bg,
                     .uniforms = frame.uniforms.buffer,
-                    .buffers = &.{ null, frame.cells_bg.buffer },
+                    .bg_cells = frame.cells_bg.buffer,
                     .draw = .{ .type = .triangle, .vertex_count = 3 },
                 });
 
@@ -1919,13 +1919,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 pass.step(.{
                     .pipeline = self.shaders.pipelines.cell_text,
                     .uniforms = frame.uniforms.buffer,
-                    .buffers = &.{
-                        frame.cells.buffer,
-                        frame.cells_bg.buffer,
-                    },
-                    .textures = &.{
-                        frame.grayscale,
-                        frame.color,
+                    .vertices = frame.cells.buffer,
+                    .bg_cells = frame.cells_bg.buffer,
+                    .textures = .{
+                        .atlas_grayscale = frame.grayscale,
+                        .atlas_color = frame.color,
                     },
                     .draw = .{
                         .type = .triangle_strip,
@@ -1971,9 +1969,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     pass.step(.{
                         .pipeline = pipeline,
+                        .post = true,
                         .uniforms = state.uniforms.buffer,
-                        .textures = &.{state.back_texture},
-                        .samplers = &.{state.sampler},
+                        .textures = .{ .image = state.back_texture },
+                        .samplers = .{ .image = state.sampler },
                         .draw = .{
                             .type = .triangle,
                             .vertex_count = 3,

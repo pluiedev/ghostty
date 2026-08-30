@@ -169,8 +169,8 @@ pub const State = struct {
 
             pass.step(.{
                 .pipeline = pipeline,
-                .buffers = &.{buf.buffer},
-                .textures = &.{texture},
+                .vertices = buf.buffer,
+                .textures = .{ .image = texture },
                 .draw = .{
                     .type = .triangle_strip,
                     .vertex_count = 4,

@@ -1,0 +1,7 @@
+.{
+    .name = .slang,
+    .version = "0.0.0",
+    .fingerprint = 0x681d367cc427ed8c, // Vendored from raugl/slang-zig (MIT)
+    .paths = .{""},
+    .dependencies = .{},
+}

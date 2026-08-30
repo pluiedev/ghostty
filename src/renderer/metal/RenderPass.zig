@@ -5,6 +5,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const objc = @import("objc");
 
+const Compiled = @import("../shaders/Compiled.zig");
+const shaders: Compiled = @import("shaders");
 const mtl = @import("api.zig");
 const Pipeline = @import("Pipeline.zig");
 const Sampler = @import("Sampler.zig");
@@ -35,13 +37,32 @@ pub const Step = struct {
     pipeline: Pipeline,
     /// MTLBuffer
     uniforms: ?objc.Object = null,
+    /// The vertex buffer, bound for vertex input. Its register index is
+    /// reserved by the pipeline's vertex descriptor.
+    vertices: ?objc.Object = null,
     /// MTLBuffer
-    buffers: []const ?objc.Object = &.{},
-    textures: []const ?Texture = &.{},
+    bg_cells: ?objc.Object = null,
+    textures: Textures = .{},
     /// Set of samplers to use for this step. The index maps to an index
     /// of a fragment texture, set via setFragmentSamplerState(_:index:).
-    samplers: []const ?Sampler = &.{},
+    samplers: Samplers = .{},
+    /// True when this step runs a shadertoy post-processing shader.
+    post: bool = false,
     draw: Draw,
+
+    /// Textures by resource, see `Compiled.Resource`.
+    pub const Textures = struct {
+        image: ?Texture = null,
+        atlas_grayscale: ?Texture = null,
+        atlas_color: ?Texture = null,
+    };
+
+    /// Samplers by resource, matching `Textures`.
+    pub const Samplers = struct {
+        image: ?Sampler = null,
+        atlas_grayscale: ?Sampler = null,
+        atlas_color: ?Sampler = null,
+    };
 
     /// Describes the draw call for this step.
     pub const Draw = struct {
@@ -131,83 +152,79 @@ pub fn step(self: *const Self, s: Step) void {
         .{s.pipeline.state.value},
     );
 
-    if (s.buffers.len > 0) {
-        // We reserve index 0 for the vertex buffer, this isn't very
-        // flexible but it lines up with the API we have for OpenGL.
-        if (s.buffers[0]) |buf| {
-            self.encoder.msgSend(
-                void,
-                objc.sel("setVertexBuffer:offset:atIndex:"),
-                .{ buf.value, @as(c_ulong, 0), @as(c_ulong, 0) },
-            );
-            self.encoder.msgSend(
-                void,
-                objc.sel("setFragmentBuffer:offset:atIndex:"),
-                .{ buf.value, @as(c_ulong, 0), @as(c_ulong, 0) },
-            );
-        }
-
-        // Set the rest of the buffers starting at index 2, this is
-        // so that we can use index 1 for the uniforms if present.
-        //
-        // Also, we set buffers (and textures) for both stages.
-        //
-        // Again, not very flexible, but it's consistent and predictable,
-        // and we need to treat the uniforms as special because of OpenGL.
-        //
-        // TODO: Maybe in the future add info to the pipeline struct which
-        //       allows it to define a mapping between provided buffers and
-        //       what index they get set at for the vertex / fragment stage.
-        for (s.buffers[1..], 2..) |b, i| if (b) |buf| {
-            self.encoder.msgSend(
-                void,
-                objc.sel("setVertexBuffer:offset:atIndex:"),
-                .{ buf.value, @as(c_ulong, 0), @as(c_ulong, i) },
-            );
-            self.encoder.msgSend(
-                void,
-                objc.sel("setFragmentBuffer:offset:atIndex:"),
-                .{ buf.value, @as(c_ulong, 0), @as(c_ulong, i) },
-            );
-        };
-    }
-
-    // Set the uniforms as buffer index 1 if present.
-    if (s.uniforms) |buf| {
+    // We reserve index 0 for the vertex buffer; the shader's global
+    // buffers are shifted by 1 to make room for it.
+    if (s.vertices) |buf| {
         self.encoder.msgSend(
             void,
             objc.sel("setVertexBuffer:offset:atIndex:"),
-            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, 1) },
+            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, 0) },
         );
         self.encoder.msgSend(
             void,
             objc.sel("setFragmentBuffer:offset:atIndex:"),
-            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, 1) },
+            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, 0) },
         );
     }
 
-    // Set textures.
-    for (s.textures, 0..) |t, i| if (t) |tex| {
+    // Bind the global buffers (and textures) for both stages, at the
+    // indices Slang assigned them in the Metal output.
+    if (s.uniforms) |buf| {
+        const index = shaders.binding(.uniforms).uniform_buffer;
         self.encoder.msgSend(
             void,
-            objc.sel("setVertexTexture:atIndex:"),
-            .{ tex.texture.value, @as(c_ulong, i) },
+            objc.sel("setVertexBuffer:offset:atIndex:"),
+            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, index) },
         );
         self.encoder.msgSend(
             void,
-            objc.sel("setFragmentTexture:atIndex:"),
-            .{ tex.texture.value, @as(c_ulong, i) },
+            objc.sel("setFragmentBuffer:offset:atIndex:"),
+            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, index) },
         );
-    };
+    }
 
-    // Set samplers.
-    for (s.samplers, 0..) |samp, i| if (samp) |sampler| {
+    if (s.bg_cells) |buf| {
+        const index = shaders.binding(.bg_cells).storage_buffer;
         self.encoder.msgSend(
             void,
-            objc.sel("setFragmentSamplerState:atIndex:"),
-            .{ sampler.sampler.value, @as(c_ulong, i) },
+            objc.sel("setVertexBuffer:offset:atIndex:"),
+            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, index) },
         );
-    };
+        self.encoder.msgSend(
+            void,
+            objc.sel("setFragmentBuffer:offset:atIndex:"),
+            .{ buf.value, @as(c_ulong, 0), @as(c_ulong, index) },
+        );
+    }
+
+    // Set textures and samplers.
+    inline for (.{
+        .{ .resource = .image_texture, .field = "image" },
+        .{ .resource = .atlas_grayscale, .field = "atlas_grayscale" },
+        .{ .resource = .atlas_color, .field = "atlas_color" },
+    }) |entry| {
+        const binding = shaders.binding(entry.resource).combined_image_sampler;
+        if (@field(s.textures, entry.field)) |tex| {
+            self.encoder.msgSend(
+                void,
+                objc.sel("setVertexTexture:atIndex:"),
+                .{ tex.texture.value, @as(c_ulong, binding.texture) },
+            );
+            self.encoder.msgSend(
+                void,
+                objc.sel("setFragmentTexture:atIndex:"),
+                .{ tex.texture.value, @as(c_ulong, binding.texture) },
+            );
+        }
+
+        if (@field(s.samplers, entry.field)) |sampler| {
+            self.encoder.msgSend(
+                void,
+                objc.sel("setFragmentSamplerState:atIndex:"),
+                .{ sampler.sampler.value, @as(c_ulong, binding.sampler) },
+            );
+        }
+    }
 
     // Draw!
     self.encoder.msgSend(
