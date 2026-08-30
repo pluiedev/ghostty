@@ -33,6 +33,11 @@ pub const Step = struct {
     buffers: []const ?gl.Buffer = &.{},
     textures: []const ?Texture = &.{},
     samplers: []const ?Sampler = &.{},
+    /// The starting texture index for binding `textures` and
+    /// `samplers`.  The Slang shader places the glyph atlas textures at
+    /// binding 3 and 4 (after `imageTexture` at binding 0), so the
+    /// cell_text pipeline needs `texture_base = 3`.
+    texture_base: u32 = 0,
     draw: Draw,
 
     /// Describes the draw call for this step.
@@ -90,19 +95,21 @@ pub fn step(self: *Self, s: Step) void {
         gl.clear(gl.c.GL_COLOR_BUFFER_BIT);
     };
 
-    // Bind the uniform buffer we bind at index 1 to align with Metal.
+    // Bind the uniform buffer at binding 1, matching the Slang shader's
+    // `[[vk::binding(1, 0)]] ConstantBuffer<Uniforms>` and the original
+    // Metal `[[buffer(1)]]` convention.
     if (s.uniforms) |ubo| {
         _ = ubo.bindBase(.uniform, 1) catch return;
     }
 
     // Bind relevant texture units.
-    for (s.textures, 0..) |t, i| if (t) |tex| {
+    for (s.textures, s.texture_base..) |t, i| if (t) |tex| {
         gl.Texture.active(@intCast(i)) catch return;
         _ = tex.texture.bind(tex.target) catch return;
     };
 
     // Bind relevant samplers.
-    for (s.samplers, 0..) |s_, i| if (s_) |sampler| {
+    for (s.samplers, s.texture_base..) |s_, i| if (s_) |sampler| {
         _ = sampler.sampler.bind(@intCast(i)) catch return;
     };
 
@@ -116,7 +123,9 @@ pub fn step(self: *Self, s: Step) void {
             @intCast(s.pipeline.stride),
         ) catch return;
 
-        for (s.buffers[1..], 1..) |b, i| if (b) |buf| {
+        // Storage buffers start at binding 2 to match the Slang shader's
+        // `[[vk::binding(2, 0)]] StructuredBuffer<uint> bg_cells`.
+        for (s.buffers[1..], 2..) |b, i| if (b) |buf| {
             _ = buf.bindBase(.storage, @intCast(i)) catch return;
         };
     }

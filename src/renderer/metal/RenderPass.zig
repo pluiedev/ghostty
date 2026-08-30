@@ -41,6 +41,11 @@ pub const Step = struct {
     /// Set of samplers to use for this step. The index maps to an index
     /// of a fragment texture, set via setFragmentSamplerState(_:index:).
     samplers: []const ?Sampler = &.{},
+    /// The starting texture/sampler index for binding `textures` and
+    /// `samplers`.  The Slang shader places the glyph atlas textures at
+    /// binding 3 and 4 (after `imageTexture` at binding 0), so the
+    /// cell_text pipeline needs `texture_base = 3`.
+    texture_base: u32 = 0,
     draw: Draw,
 
     /// Describes the draw call for this step.
@@ -148,16 +153,12 @@ pub fn step(self: *const Self, s: Step) void {
         }
 
         // Set the rest of the buffers starting at index 2, this is
-        // so that we can use index 1 for the uniforms if present.
+        // so that we can use index 0 for the vertex buffer and index 1
+        // for the uniforms.  Slang auto-assigns `bg_cells` to buffer(1)
+        // in the Metal output, which we shift by 1 with `-fvk-b-shift 1 0`
+        // at compile time, making it buffer(2).
         //
         // Also, we set buffers (and textures) for both stages.
-        //
-        // Again, not very flexible, but it's consistent and predictable,
-        // and we need to treat the uniforms as special because of OpenGL.
-        //
-        // TODO: Maybe in the future add info to the pipeline struct which
-        //       allows it to define a mapping between provided buffers and
-        //       what index they get set at for the vertex / fragment stage.
         for (s.buffers[1..], 2..) |b, i| if (b) |buf| {
             self.encoder.msgSend(
                 void,
@@ -172,7 +173,9 @@ pub fn step(self: *const Self, s: Step) void {
         };
     }
 
-    // Set the uniforms as buffer index 1 if present.
+    // Set the uniforms as buffer index 1 if present.  Slang auto-assigns
+    // `uniforms` to buffer(0) in the Metal output, which we shift by 1
+    // with `-fvk-b-shift 1 0` at compile time, making it buffer(1).
     if (s.uniforms) |buf| {
         self.encoder.msgSend(
             void,
@@ -187,7 +190,7 @@ pub fn step(self: *const Self, s: Step) void {
     }
 
     // Set textures.
-    for (s.textures, 0..) |t, i| if (t) |tex| {
+    for (s.textures, s.texture_base..) |t, i| if (t) |tex| {
         self.encoder.msgSend(
             void,
             objc.sel("setVertexTexture:atIndex:"),
@@ -201,7 +204,7 @@ pub fn step(self: *const Self, s: Step) void {
     };
 
     // Set samplers.
-    for (s.samplers, 0..) |samp, i| if (samp) |sampler| {
+    for (s.samplers, s.texture_base..) |samp, i| if (samp) |sampler| {
         self.encoder.msgSend(
             void,
             objc.sel("setFragmentSamplerState:atIndex:"),

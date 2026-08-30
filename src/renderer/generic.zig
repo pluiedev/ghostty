@@ -1894,6 +1894,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         frame.grayscale,
                         frame.color,
                     },
+                    // Atlases occupy bindings 3 and 4 in the Slang shader.
+                    .texture_base = 3,
                     .draw = .{
                         .type = .triangle_strip,
                         .vertex_count = 4,
