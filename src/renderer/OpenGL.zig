@@ -4,15 +4,16 @@ pub const OpenGL = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const gl = @import("opengl");
+const egl = gl.egl;
 const shadertoy = @import("shadertoy.zig");
 const apprt = @import("../apprt.zig");
 const font = @import("../font/main.zig");
 const configpkg = @import("../config.zig");
 const rendererpkg = @import("../renderer.zig");
 const Renderer = rendererpkg.GenericRenderer(OpenGL);
+const Dmabuf = @import("Dmabuf.zig");
 
 pub const GraphicsAPI = OpenGL;
-pub const ExportedFrame = gl.egl.ExportedFrame;
 pub const Target = @import("opengl/Target.zig");
 pub const Frame = @import("opengl/Frame.zig");
 pub const RenderPass = @import("opengl/RenderPass.zig");
@@ -42,8 +43,8 @@ alloc: std.mem.Allocator,
 /// Alpha blending mode
 blending: configpkg.Config.AlphaBlending,
 
-/// EGL context. Used to export the render target as a DMABUF.
-egl: gl.egl.Context,
+egl_display: *gl.egl.Display,
+egl_context: *gl.egl.Context,
 
 /// Presentation state: owns the GBM device, blits rendered targets
 /// into freshly allocated GBM buffers, and exports them as DMA-BUFs.
@@ -51,23 +52,74 @@ presenter: Presenter,
 
 pub fn init(alloc: Allocator, opts: rendererpkg.Options) !OpenGL {
     // Load EGL extension function pointers via GLAD.
-    try gl.egl.load();
+    try egl.load();
 
     // Initialize the EGL context on the main thread before the
     // renderer thread starts, so that the generic renderer
     // can eagerly create swap chain GPU resources.
-    const egl: gl.egl.Context = try .init(MIN_VERSION_MAJOR, MIN_VERSION_MINOR);
-    errdefer egl.deinit();
+    const display: *egl.Display = try .init(egl.c.EGL_DEFAULT_DISPLAY);
+
+    try egl.bindApi(egl.c.EGL_OPENGL_API);
+
+    // Choose a config. We need a config that is renderable with
+    // OpenGL and a RGBA8 color buffer.
+    const config = egl.Config.choose(device.display, &.{
+        // Even though we're doing surfaceless rendering, we have to
+        // explicitly set EGL_SURFACE_TYPE to 0, since EGL defaults to
+        // EGL_WINDOW_BIT which DRM-based EGL display implementations
+        // reasonably do not support.
+        egl.c.EGL_SURFACE_TYPE,    0,
+        egl.c.EGL_RENDERABLE_TYPE, egl.c.EGL_OPENGL_BIT,
+        egl.c.EGL_RED_SIZE,        8,
+        egl.c.EGL_GREEN_SIZE,      8,
+        egl.c.EGL_BLUE_SIZE,       8,
+        egl.c.EGL_ALPHA_SIZE,      8,
+        egl.c.EGL_NONE,
+    }) catch |err| {
+        log.warn("failed to choose config err={}", .{err});
+        return err;
+    };
+
+    // Create our context.
+    const context = egl.Context.create(device.display, config, null, &.{
+        egl.c.EGL_CONTEXT_MAJOR_VERSION,       MIN_VERSION_MAJOR,
+        egl.c.EGL_CONTEXT_MINOR_VERSION,       MIN_VERSION_MINOR,
+        egl.c.EGL_CONTEXT_OPENGL_PROFILE_MASK, egl.c.EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+        egl.c.EGL_NONE,
+    }) catch |err| {
+        log.warn("failed to create EGL context err={}", .{err});
+        return err;
+    };
+    errdefer context.destroy(device.display) catch {};
+
+    device.display.makeCurrent(null, null, context) catch |err| {
+        log.warn("failed to make EGL context current err={}", .{err});
+        return err;
+    };
+
+    // Release current so that the main thread
+    // doesn't hold onto the GL context forever.
+    device.display.releaseCurrent();
 
     return .{
         .alloc = alloc,
         .blending = opts.config.blending,
-        .egl = egl,
+        .egl_display = device.display,
+        .egl_context = context,
+        .presenter = Presenter.init(device.display, device.drm_node),
     };
 }
 
 pub fn deinit(self: *OpenGL) void {
-    self.egl.deinit();
+    // Backstop in case the render thread never ran; otherwise the
+    // presenter was already deinitialized in `threadExit`.
+    self.presenter.deinit();
+    self.egl_display.releaseCurrent();
+    self.egl_context.destroy(self.egl_display) catch {};
+
+    // Do not destroy the EGL display here as
+    // it is shared across the entire process.
+    // It will get automatically torn down by the OS.
     self.* = undefined;
 }
 
@@ -176,7 +228,7 @@ fn prepareContext(getProcAddress: anytype) !void {
 /// function pointers so all subsequent GL work on this thread is valid.
 pub fn threadEnter(self: *OpenGL, surface: *apprt.Surface) !void {
     _ = surface;
-    try self.egl.makeCurrent();
+    try self.egl_display.makeCurrent(null, null, self.egl_context);
     // Load our function pointers for this thread's threadlocal.
     try prepareContext(&gl.egl.getProcAddress);
 }
@@ -185,7 +237,7 @@ pub fn threadEnter(self: *OpenGL, surface: *apprt.Surface) !void {
 /// thread; unbinds the context from this thread so it can be destroyed on
 /// the main thread.
 pub fn threadExit(self: *OpenGL) void {
-    self.egl.releaseCurrent();
+    self.egl_display.releaseCurrent();
     gl.glad.unload();
 }
 
@@ -206,7 +258,9 @@ pub fn surfaceSize(self: *const OpenGL) !struct { width: u32, height: u32 } {
 /// but now we need to do this manually.
 pub fn setViewport(self: *const OpenGL, width: u32, height: u32) void {
     _ = self;
-    gl.glad.context.Viewport.?(0, 0, @intCast(width), @intCast(height));
+    gl.viewport(0, 0, @intCast(width), @intCast(height)) catch |err| {
+        log.warn("failed to set OpenGL viewport err={}", .{err});
+    };
 }
 
 /// Actions taken before doing anything in `drawFrame`.
@@ -244,24 +298,46 @@ pub fn initTarget(self: *const OpenGL, width: usize, height: usize) !Target {
     });
 }
 
-/// Export a rendered target as a DMABUF `Present`. The caller takes
-/// ownership of the returned `Present`'s FDs and is responsible for
+/// Export a rendered target as a DMABUF. The caller takes
+/// ownership of the returned DMABUF's FDs and is responsible for
 /// either compositing it or releasing it.
 ///
 /// This runs on the render thread.
 pub fn present(self: *OpenGL, target: Target) !ExportedFrame {
-    // Blit the rendered sRGB texture into the plain RGBA8 export texture.
-    // Mesa can't export sRGB textures to dma-buf, so we blit the
-    // already-sRGB-encoded pixels into a plain RGBA8 texture first.
-    try target.blitForExport();
+    // In order to present a target we blit it to the export framebuffer,
+    // and export it as a DMABUF.
 
-    // Export the export texture as a dma-buf present. The EGL image
-    // creation, query, and fd export all happen inside `exportDmabuf`.
-    return try self.egl.exportDmabuf(
-        target.export_texture.id,
+    // We disable GL_FRAMEBUFFER_SRGB while doing this blit, otherwise the
+    // values may be linearized as they're copied, but even though the draw
+    // framebuffer has a linear internal format, the values in it should be
+    // sRGB, not linear!
+    try gl.disable(gl.c.GL_FRAMEBUFFER_SRGB);
+    defer gl.enable(gl.c.GL_FRAMEBUFFER_SRGB) catch |err| {
+        log.err("Error re-enabling GL_FRAMEBUFFER_SRGB, err={}", .{err});
+    };
+
+    // Bind the render FBO as read, the export FBO as draw.
+    const read_bind = try target.framebuffer.bind(.read);
+    defer read_bind.unbind();
+
+    const draw_bind = try target.export_framebuffer.bind(.draw);
+    defer draw_bind.unbind();
+
+    // Blit
+    try gl.blitFramebuffer(
+        0,
+        0,
         @intCast(target.width),
         @intCast(target.height),
+        0,
+        0,
+        @intCast(target.width),
+        @intCast(target.height),
+        .{ .color_buffer_bit = true },
+        .nearest,
     );
+
+    return target.exportDmabuf(self.egl_display, self.egl_context);
 }
 
 /// Returns the options to use when constructing buffers.
@@ -286,7 +362,7 @@ pub inline fn textureOptions(self: OpenGL) Texture.Options {
     return .{
         .format = .rgba,
         .internal_format = .srgba,
-        .target = .@"2D",
+        .target = .@"2d",
         .min_filter = .linear,
         .mag_filter = .linear,
         .wrap_s = .clamp_to_edge,
@@ -333,7 +409,7 @@ pub inline fn imageTextureOptions(
     return .{
         .format = format.toPixelFormat(),
         .internal_format = if (srgb) .srgba else .rgba,
-        .target = .@"2D",
+        .target = .@"2d",
         // TODO: Generate mipmaps for image textures and use
         //       linear_mipmap_linear filtering so that they
         //       look good even when scaled way down.
@@ -364,7 +440,7 @@ pub fn initAtlasTexture(
         .{
             .format = format,
             .internal_format = internal_format,
-            .target = .Rectangle,
+            .target = .rectangle,
             .min_filter = .nearest,
             .mag_filter = .nearest,
             .wrap_s = .clamp_to_edge,

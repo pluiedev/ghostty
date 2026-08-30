@@ -41,5 +41,6 @@ pub const disable = draw.disable;
 pub const frontFace = draw.frontFace;
 pub const pixelStore = draw.pixelStore;
 pub const viewport = draw.viewport;
+pub const blitFramebuffer = draw.blitFramebuffer;
 pub const flush = draw.flush;
 pub const finish = draw.finish;
