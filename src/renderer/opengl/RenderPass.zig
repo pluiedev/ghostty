@@ -5,6 +5,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const gl = @import("opengl");
 
+const Compiled = @import("../shaders/Compiled.zig");
+const shaders: Compiled = @import("shaders");
 const Sampler = @import("Sampler.zig");
 const Target = @import("Target.zig");
 const Texture = @import("Texture.zig");
@@ -29,11 +31,29 @@ pub const Options = struct {
 /// Describes a step in a render pass.
 pub const Step = struct {
     pipeline: Pipeline,
+
     uniforms: ?gl.Buffer = null,
-    buffers: []const ?gl.Buffer = &.{},
-    textures: []const ?Texture = &.{},
-    samplers: []const ?Sampler = &.{},
+    /// The vertex buffer, bound for vertex input via the VAO.
+    vertices: ?gl.Buffer = null,
+    bg_cells: ?gl.Buffer = null,
+
+    textures: Textures = .{},
+    samplers: Samplers = .{},
+    post: bool = false,
+
     draw: Draw,
+
+    pub const Textures = struct {
+        image: ?Texture = null,
+        atlas_grayscale: ?Texture = null,
+        atlas_color: ?Texture = null,
+    };
+
+    pub const Samplers = struct {
+        image: ?Sampler = null,
+        atlas_grayscale: ?Sampler = null,
+        atlas_color: ?Sampler = null,
+    };
 
     /// Describes the draw call for this step.
     pub const Draw = struct {
@@ -90,35 +110,46 @@ pub fn step(self: *Self, s: Step) void {
         gl.clear(gl.c.GL_COLOR_BUFFER_BIT);
     };
 
-    // Bind the uniform buffer we bind at index 1 to align with Metal.
     if (s.uniforms) |ubo| {
-        _ = ubo.bindBase(.uniform, 1) catch return;
+        const binding: u32 = if (s.post)
+            Compiled.post_uniforms_binding
+        else
+            shaders.binding(.uniforms);
+        _ = ubo.bindBase(.uniform, binding) catch return;
     }
 
+    inline for (.{
+        .{ .resource = Compiled.Resource.bg_cells, .field = "bg_cells" },
+    }) |entry| {
+        if (@field(s, entry.field)) |buf| {
+            const binding = shaders.binding(entry.resource);
+            _ = buf.bindBase(.storage, binding) catch return;
+        }
+    }
+
+    // Bind the vertex buffer for vertex input.
+    if (s.vertices) |vbo| vaobind.bindVertexBuffer(
+        0,
+        vbo.id,
+        0,
+        @intCast(s.pipeline.stride),
+    ) catch return;
+
     // Bind relevant texture units.
-    for (s.textures, 0..) |t, i| if (t) |tex| {
-        gl.Texture.active(@intCast(i)) catch return;
-        _ = tex.texture.bind(tex.target) catch return;
-    };
+    inline for (.{
+        .{ .resource = Compiled.Resource.image_texture, .texture = "image", .sampler = "image" },
+        .{ .resource = Compiled.Resource.atlas_grayscale, .texture = "atlas_grayscale", .sampler = "atlas_grayscale" },
+        .{ .resource = Compiled.Resource.atlas_color, .texture = "atlas_color", .sampler = "atlas_color" },
+    }) |entry| {
+        const binding = shaders.binding(entry.resource);
+        if (@field(s.textures, entry.texture)) |tex| {
+            gl.Texture.active(binding) catch return;
+            _ = tex.texture.bind(tex.target) catch return;
+        }
 
-    // Bind relevant samplers.
-    for (s.samplers, 0..) |s_, i| if (s_) |sampler| {
-        _ = sampler.sampler.bind(@intCast(i)) catch return;
-    };
-
-    // Bind 0th buffer as the vertex buffer,
-    // and bind the rest as storage buffers.
-    if (s.buffers.len > 0) {
-        if (s.buffers[0]) |vbo| vaobind.bindVertexBuffer(
-            0,
-            vbo.id,
-            0,
-            @intCast(s.pipeline.stride),
-        ) catch return;
-
-        for (s.buffers[1..], 1..) |b, i| if (b) |buf| {
-            _ = buf.bindBase(.storage, @intCast(i)) catch return;
-        };
+        if (@field(s.samplers, entry.sampler)) |sampler| {
+            _ = sampler.sampler.bind(binding) catch return;
+        }
     }
 
     if (s.pipeline.blending_enabled) {

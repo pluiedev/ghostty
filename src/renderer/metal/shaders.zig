@@ -10,6 +10,9 @@ const Pipeline = @import("Pipeline.zig");
 
 const log = std.log.scoped(.metal);
 
+const Compiled = @import("../shaders/Compiled.zig");
+const shader_data: Compiled = @import("shaders");
+
 const pipeline_descs: []const struct { [:0]const u8, PipelineDescription } =
     &.{
         .{ "bg_color", .{
@@ -337,7 +340,7 @@ fn initLibrary(device: objc.Object) !objc.Object {
     const start: std.Io.Timestamp = .now(global.io(), .awake);
 
     const data = try macos.dispatch.Data.create(
-        @embedFile("ghostty_metallib"),
+        shader_data.code.metal,
         macos.dispatch.queue.getMain(),
         macos.dispatch.Data.DESTRUCTOR_DEFAULT,
     );

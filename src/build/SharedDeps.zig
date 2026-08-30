@@ -5,10 +5,10 @@ const builtin = @import("builtin");
 
 const Config = @import("Config.zig");
 const HelpStrings = @import("HelpStrings.zig");
-const MetallibStep = @import("MetallibStep.zig");
 const UnicodeTables = @import("UnicodeTables.zig");
 const GhosttyFrameData = @import("GhosttyFrameData.zig");
 const DistResource = @import("GhosttyDist.zig").Resource;
+const GhosttyShaders = @import("GhosttyShaders.zig");
 const gtk_helpers = @import("gtk.zig");
 const translate_c = @import("translate_c");
 
@@ -16,10 +16,10 @@ config: *const Config,
 
 options: *std.Build.Step.Options,
 help_strings: HelpStrings,
-metallib: ?*MetallibStep,
 unicode_tables: UnicodeTables,
 framedata: GhosttyFrameData,
 uucode_tables: std.Build.LazyPath,
+shaders: GhosttyShaders,
 
 /// Singleton uucode module, instantiated once in `init` and reused
 /// everywhere so that ghostty and vaxis share the same compiled tables in
@@ -90,10 +90,10 @@ pub fn init(b: *std.Build, cfg: *const Config) !SharedDeps {
         .framedata = try .init(b),
         .uucode_tables = uucode_tables,
         .uucode_mod = uucode_mod,
+        .shaders = try .init(b, cfg, b.path("src/renderer/shaders/shaders.slang")),
 
         // Setup by retarget
         .options = undefined,
-        .metallib = undefined,
     };
     try result.initTarget(b, cfg.target);
     if (cfg.emit_unicode_table_gen) result.unicode_tables.install(b);
@@ -135,13 +135,6 @@ fn initTarget(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
 ) !void {
-    // Update our metallib
-    self.metallib = .create(b, .{
-        .name = "Ghostty",
-        .target = target,
-        .sources = &.{b.path("src/renderer/shaders/shaders.metal")},
-    });
-
     // Change our config
     const config = try b.allocator.create(Config);
     config.* = self.config.*;
@@ -499,13 +492,15 @@ pub fn add(
     // This makes things like `os/log.h` available for cross-compiling.
     if (step.rootModuleTarget().os.tag.isDarwin()) {
         try @import("apple_sdk").addPaths(b, step);
-
-        const metallib = self.metallib.?;
-        metallib.output.addStepDependencies(&step.step);
-        step.root_module.addAnonymousImport("ghostty_metallib", .{
-            .root_source_file = metallib.output,
-        });
     }
+
+    // All the generated shader data (GLSL, SPIR-V, Metal library, and the
+    // binding table) travels in a single `shaders.zon`.
+    self.shaders.zon.addStepDependencies(&step.step);
+    step.root_module.addAnonymousImport("shaders", .{
+        .root_source_file = self.shaders.zon,
+    });
+    step.root_module.addOptions("options", self.shaders.options);
 
     // Other dependencies, mostly pure Zig
     if (b.lazyDependency("opengl", .{})) |dep| {
@@ -661,6 +656,19 @@ pub fn add(
             .file = b.path("vendor/glad/src/gl.c"),
             .flags = &.{},
         });
+
+        // Vulkan bindings, generated from the Vulkan-Headers vk.xml registry
+        // by vulkan-zig. Only needed when the Vulkan renderer is selected.
+        if (self.config.renderer == .vulkan) vulkan: {
+            const headers_dep = b.lazyDependency("vulkan_headers", .{}) orelse
+                break :vulkan;
+            const vulkan_dep = b.lazyDependency("vulkan", .{
+                .registry = headers_dep.path("registry/vk.xml"),
+            }) orelse break :vulkan;
+            step.root_module.addImport("vulkan", vulkan_dep.module("vulkan-zig"));
+
+            step.root_module.linkSystemLibrary("vulkan", dynamic_link_opts);
+        }
 
         // Link EGL for GTK.
         if (self.config.app_runtime == .gtk) {
