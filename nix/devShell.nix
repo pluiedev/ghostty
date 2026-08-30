@@ -72,6 +72,7 @@
   hyperfine,
   poop,
   typos,
+  shader-slang,
   shellcheck,
   swiftlint,
   uv,
@@ -112,6 +113,7 @@ in
         ncurses
         pandoc
         pkg-config
+        shader-slang
         scdoc
         zig
         zip
