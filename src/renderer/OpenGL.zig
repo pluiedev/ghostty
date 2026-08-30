@@ -244,7 +244,9 @@ pub fn surfaceSize(self: *const OpenGL) !struct { width: u32, height: u32 } {
 /// but now we need to do this manually.
 pub fn setViewport(self: *const OpenGL, width: u32, height: u32) void {
     _ = self;
-    gl.glad.context.Viewport.?(0, 0, @intCast(width), @intCast(height));
+    gl.viewport(0, 0, @intCast(width), @intCast(height)) catch |err| {
+        log.warn("failed to set OpenGL viewport err={}", .{err});
+    };
 }
 
 /// Actions taken before doing anything in `drawFrame`.
@@ -348,7 +350,7 @@ pub inline fn textureOptions(self: OpenGL) Texture.Options {
     return .{
         .format = .rgba,
         .internal_format = .srgba,
-        .target = .@"2D",
+        .target = .@"2d",
         .min_filter = .linear,
         .mag_filter = .linear,
         .wrap_s = .clamp_to_edge,
@@ -395,7 +397,7 @@ pub inline fn imageTextureOptions(
     return .{
         .format = format.toPixelFormat(),
         .internal_format = if (srgb) .srgba else .rgba,
-        .target = .@"2D",
+        .target = .@"2d",
         // TODO: Generate mipmaps for image textures and use
         //       linear_mipmap_linear filtering so that they
         //       look good even when scaled way down.
@@ -426,7 +428,7 @@ pub fn initAtlasTexture(
         .{
             .format = format,
             .internal_format = internal_format,
-            .target = .Rectangle,
+            .target = .rectangle,
             .min_filter = .nearest,
             .mag_filter = .nearest,
             .wrap_s = .clamp_to_edge,

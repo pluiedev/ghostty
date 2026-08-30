@@ -56,23 +56,23 @@ pub fn init(opts: Options) !Self {
     const texture = try gl.Texture.create();
     errdefer texture.destroy();
     {
-        const bound_tex = try texture.bind(.@"2D");
+        const bound_tex = try texture.bind(.@"2d");
         defer bound_tex.unbind();
-        try bound_tex.parameter(.MinFilter, @intFromEnum(gl.Texture.MinFilter.nearest));
-        try bound_tex.parameter(.MagFilter, @intFromEnum(gl.Texture.MagFilter.nearest));
-        try bound_tex.parameter(.WrapS, @intFromEnum(gl.Texture.Wrap.clamp_to_edge));
-        try bound_tex.parameter(.WrapT, @intFromEnum(gl.Texture.Wrap.clamp_to_edge));
+        try bound_tex.parameter(.min_filter, .nearest);
+        try bound_tex.parameter(.mag_filter, .nearest);
+        try bound_tex.parameter(.wrap_s, .clamp_to_edge);
+        try bound_tex.parameter(.wrap_t, .clamp_to_edge);
         try bound_tex.image2D(
             0,
             .srgba,
             @intCast(opts.width),
             @intCast(opts.height),
             .rgba,
-            .UnsignedByte,
+            .unsigned_byte,
             null,
         );
-        try bound_tex.parameter(.BaseLevel, @as(gl.c.GLint, 0));
-        try bound_tex.parameter(.MaxLevel, @as(gl.c.GLint, 0));
+        try bound_tex.parameter(.base_level, 0);
+        try bound_tex.parameter(.max_level, 0);
     }
 
     const fbo = try gl.Framebuffer.create();
@@ -80,7 +80,7 @@ pub fn init(opts: Options) !Self {
     {
         const bound_fbo = try fbo.bind(.framebuffer);
         defer bound_fbo.unbind();
-        try bound_fbo.texture2D(.color0, .@"2D", texture, 0);
+        try bound_fbo.texture2D(.color0, .@"2d", texture, 0);
         switch (bound_fbo.checkStatus()) {
             .complete => {},
             else => |status| {
@@ -94,23 +94,23 @@ pub fn init(opts: Options) !Self {
     const export_texture = try gl.Texture.create();
     errdefer export_texture.destroy();
     {
-        const bound_tex = try export_texture.bind(.@"2D");
+        const bound_tex = try export_texture.bind(.@"2d");
         defer bound_tex.unbind();
-        try bound_tex.parameter(.MinFilter, @intFromEnum(gl.Texture.MinFilter.nearest));
-        try bound_tex.parameter(.MagFilter, @intFromEnum(gl.Texture.MagFilter.nearest));
-        try bound_tex.parameter(.WrapS, @intFromEnum(gl.Texture.Wrap.clamp_to_edge));
-        try bound_tex.parameter(.WrapT, @intFromEnum(gl.Texture.Wrap.clamp_to_edge));
+        try bound_tex.parameter(.min_filter, .nearest);
+        try bound_tex.parameter(.mag_filter, .nearest);
+        try bound_tex.parameter(.wrap_s, .clamp_to_edge);
+        try bound_tex.parameter(.wrap_t, .clamp_to_edge);
         try bound_tex.image2D(
             0,
             .rgba,
             @intCast(opts.width),
             @intCast(opts.height),
             .rgba,
-            .UnsignedByte,
+            .unsigned_byte,
             null,
         );
-        try bound_tex.parameter(.BaseLevel, @as(gl.c.GLint, 0));
-        try bound_tex.parameter(.MaxLevel, @as(gl.c.GLint, 0));
+        try bound_tex.parameter(.base_level, 0);
+        try bound_tex.parameter(.max_level, 0);
     }
 
     const export_fbo = try gl.Framebuffer.create();
@@ -118,7 +118,7 @@ pub fn init(opts: Options) !Self {
     {
         const bound_fbo = try export_fbo.bind(.framebuffer);
         defer bound_fbo.unbind();
-        try bound_fbo.texture2D(.color0, .@"2D", export_texture, 0);
+        try bound_fbo.texture2D(.color0, .@"2d", export_texture, 0);
         switch (bound_fbo.checkStatus()) {
             .complete => {},
             else => |status| {
