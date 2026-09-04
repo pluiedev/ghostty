@@ -56,7 +56,6 @@ pub inline fn renderPass(
 /// pushing the newly presented and exported frame to the frame queue.
 pub fn complete(self: *const Self, sync: bool) void {
     _ = sync;
-    gl.finish();
 
     // If there are any GL errors, consider the frame unhealthy.
     const health: Health = if (gl.errors.getError()) .healthy else |_| .unhealthy;
@@ -74,6 +73,7 @@ pub fn complete(self: *const Self, sync: bool) void {
         // Notify the surface that it should redraw
         _ = self.renderer.surface_mailbox.push(.redraw, .{ .forever = {} });
     }
+    gl.finish();
 
     // Report the health to the renderer.
     self.renderer.frameCompleted(health);
