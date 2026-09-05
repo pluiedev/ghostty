@@ -251,18 +251,6 @@ pub const Window = extern struct {
         /// State and logic for windowing protocol for a window.
         winproto: winprotopkg.Window,
 
-        /// Kind of hacky to have this but this lets us know if we've
-        /// initialized any single surface yet. We need this because we
-        /// gate default size on this so that we don't resize the window
-        /// after surfaces already exist.
-        ///
-        /// I think long term we can probably get rid of this by implementing
-        /// a property or method that gets us all the surfaces in all the
-        /// tabs and checking if we have zero or one that isn't initialized.
-        ///
-        /// For now, this logic is more similar to our legacy GTK side.
-        surface_init: bool = false,
-
         /// See tabOverviewOpen for why we have this.
         tab_overview_focus_timer: ?c_uint = null,
 
@@ -476,10 +464,6 @@ pub const Window = extern struct {
         );
 
         if (parent_) |p| {
-            // For a new window's first tab, inherit the parent's initial size hints.
-            if (context == .window) {
-                surfaceInit(p.rt_surface.gobj(), self);
-            }
             tab.setParentWithContext(p, context);
         }
 
@@ -536,6 +520,11 @@ pub const Window = extern struct {
             split_tree.getTree(),
             self,
         );
+
+        // For the first tab, it's also important to make sure the
+        // split tree finishes rebuilding, so the window's initial size
+        // takes the initial size of the surface into account.
+        split_tree.forceRebuild();
 
         return page;
     }
@@ -824,7 +813,6 @@ pub const Window = extern struct {
         self: *Self,
         tree: *const Surface.Tree,
     ) void {
-        const priv = self.private();
         var it = tree.iterator();
         while (it.next()) |entry| {
             const surface = entry.view;
@@ -876,20 +864,6 @@ pub const Window = extern struct {
                 self,
                 .{},
             );
-
-            // If we've never had a surface initialize yet, then we register
-            // this signal. Its theoretically possible to launch multiple surfaces
-            // before init so we could register this on multiple and that is not
-            // a problem because we'll check the flag again in each handler.
-            if (!priv.surface_init) {
-                _ = Surface.signals.init.connect(
-                    surface,
-                    *Self,
-                    surfaceInit,
-                    self,
-                    .{},
-                );
-            }
         }
     }
 
@@ -1283,10 +1257,6 @@ pub const Window = extern struct {
         self: *Self,
     ) callconv(.c) void {
         const priv = self.private();
-        if (priv.surface_init) {
-            log.warn("quick terminal property can't be changed after surfaces have been initialized", .{});
-            return;
-        }
 
         if (priv.quick_terminal) {
             // Initialize the quick terminal at the app-layer
@@ -1918,31 +1888,6 @@ pub const Window = extern struct {
         }
 
         // We react to the changes in the propMaximized callback
-    }
-
-    fn surfaceInit(
-        surface: *Surface,
-        self: *Self,
-    ) callconv(.c) void {
-        const priv = self.private();
-
-        // Make sure we init only once
-        if (priv.surface_init) return;
-        priv.surface_init = true;
-
-        // Setup our default and minimum size.
-        if (surface.getDefaultSize()) |size| {
-            self.as(gtk.Window).setDefaultSize(
-                @intCast(size.width),
-                @intCast(size.height),
-            );
-        }
-        if (surface.getMinSize()) |size| {
-            self.as(gtk.Widget).setSizeRequest(
-                @intCast(size.width),
-                @intCast(size.height),
-            );
-        }
     }
 
     fn tabSplitTreeChanged(
