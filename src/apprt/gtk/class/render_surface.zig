@@ -241,11 +241,16 @@ pub const RenderSurface = extern struct {
         planes.* = frame.planes;
         errdefer planes.deinit();
 
+        var err_: ?*glib.Error = null;
         const texture = builder.build(
             dmabufDestroy,
             planes,
-            null,
-        ) orelse return error.DmabufBuildFailed;
+            &err_,
+        ) orelse {
+            if (err_) |err|
+                log.warn("failed to build dmabuf err={s}", .{err.f_message orelse "(unknown)"});
+            return error.DmabufBuildFailed;
+        };
 
         // Swap out the old texture.
         if (priv.texture) |old| old.as(gobject.Object).unref();
