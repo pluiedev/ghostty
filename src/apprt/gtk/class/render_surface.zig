@@ -158,15 +158,6 @@ pub const RenderSurface = extern struct {
         const h = widget.getHeight();
         if (w == 0 or h == 0) return;
 
-        // In OpenGL +Y is up but in GSK (and DirectX, Metal, Vulkan, etc.)
-        // +Y is down. We therefore might need to flip the rendered image.
-        snap.save();
-        defer snap.restore();
-        if (comptime !rendererpkg.Renderer.API.custom_shader_y_is_down) {
-            snap.translate(&.{ .f_x = 0, .f_y = @floatFromInt(h) });
-            snap.scale(1, -1);
-        }
-
         snap.appendTexture(texture, &.{
             .f_origin = .{ .f_x = 0, .f_y = 0 },
             .f_size = .{ .f_width = @floatFromInt(w), .f_height = @floatFromInt(h) },
