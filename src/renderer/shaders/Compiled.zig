@@ -48,6 +48,8 @@ pub const Code = union(Target) {
     metal: []const u8,
     /// The GLSL source for every entry point.
     glsl: std.enums.EnumFieldStruct(Entrypoint, []const u8, null),
+    /// The compiled SPIR-V module.
+    spirv: []const u8,
 };
 
 /// The global shader resources in the order they are declared in
@@ -77,6 +79,7 @@ pub const Resource = enum {
 pub const Target = enum {
     metal,
     glsl,
+    spirv,
 };
 
 /// The binding of a single resource for a single target.
@@ -90,7 +93,7 @@ pub const Binding = union(enum) {
     /// Descriptor-style binding. All GPU resources bind to the same
     /// index space regardless of resource type.
     ///
-    /// Currently used by OpenGL.
+    /// Currently used by Vulkan and OpenGL.
     descriptor: u32,
 
     /// The kind of a binding as Slang laid it out.
@@ -129,14 +132,14 @@ pub fn initBindings(values: std.EnumArray(Resource, Binding)) Bindings {
 pub fn binding(self: Compiled, comptime resource: Resource) BindingSpace {
     return switch (table_target) {
         .metal => @field(self.table, @tagName(resource)).registers,
-        .glsl => @field(self.table, @tagName(resource)).descriptor,
+        .glsl, .spirv => @field(self.table, @tagName(resource)).descriptor,
     };
 }
 
 /// The binding space resources are bound in for the configured target.
 pub const BindingSpace = switch (table_target) {
     .metal => Binding.Registers,
-    .glsl => u32,
+    .glsl, .spirv => u32,
 };
 
 /// The target the shader table was generated for, based on the
@@ -144,6 +147,7 @@ pub const BindingSpace = switch (table_target) {
 pub const table_target: Target = switch (build_options.renderer) {
     .metal => .metal,
     .opengl => .glsl,
+    .vulkan => .spirv,
 };
 
 /// The binding index the shadertoy post-processing shaders expect for
@@ -191,11 +195,22 @@ pub fn main(init: std.process.Init) !void {
             }
             break :metal .metal;
         },
+        .vulkan => vulkan: {
+            // FIXME: Slang miscompiles the bg_image_vertex entrypoint by
+            // emitting an invalid vector constant (a `v2float` with 4
+            // elements) when optimizing. This shouldn't cause a huge
+            // performance impact since our shaders are rather light by the
+            // standards of modern GPUs (plus drivers perform their own
+            // optimizations anyway).
+            try target_options.append(alloc, .optimization(0));
+            break :vulkan .spirv;
+        },
         .opengl => .glsl,
     };
     const target: slang.TargetDesc = .{
         .format = switch (target_kind) {
             .metal => .metal_lib,
+            .spirv => .spirv,
             .glsl => .glsl,
         },
         .compiler_option_entries = if (target_options.items.len > 0)
@@ -278,7 +293,7 @@ fn getCode(
     program: *slang.IComponentType,
 ) !Compiled.Code {
     switch (target) {
-        .metal => {
+        .metal, .spirv => {
             var code: *slang.IBlob = undefined;
             try program.getTargetCode(0, &code, null);
             defer code.release();
