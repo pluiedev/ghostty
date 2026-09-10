@@ -670,6 +670,19 @@ pub fn add(
             step.root_module.linkSystemLibrary("vulkan", dynamic_link_opts);
         }
 
+        // Vulkan bindings, generated from the Vulkan-Headers vk.xml registry
+        // by vulkan-zig. Only needed when the Vulkan renderer is selected.
+        if (self.config.renderer == .vulkan) vulkan: {
+            const headers_dep = b.lazyDependency("vulkan_headers", .{}) orelse
+                break :vulkan;
+            const vulkan_dep = b.lazyDependency("vulkan", .{
+                .registry = headers_dep.path("registry/vk.xml"),
+            }) orelse break :vulkan;
+            step.root_module.addImport("vulkan", vulkan_dep.module("vulkan-zig"));
+
+            step.root_module.linkSystemLibrary("vulkan", dynamic_link_opts);
+        }
+
         // Link EGL for GTK.
         if (self.config.app_runtime == .gtk) {
             step.root_module.addCSourceFile(.{

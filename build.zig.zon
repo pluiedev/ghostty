@@ -64,6 +64,12 @@
             .hash = "gobject-0.3.2-Skun7F6HogCMynX2JqeSHS7xr-8pK4ob-qRFIcEasVi3",
             .lazy = true,
         },
+        .vulkan = .{
+            // Snektron/vulkan-zig, zig-0.16-compat branch
+            .url = "https://github.com/Snektron/vulkan-zig/archive/b496a6a561ffbbeb530b0f9ed4e059f88c0723a5.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx7N9AwD7IZt5_XNHtkJ4G9qY0pCH-cpcOsbL8wzD",
+            .lazy = true,
+        },
 
         // C libs
         .dcimgui = .{ .path = "./pkg/dcimgui", .lazy = true },
@@ -122,6 +128,11 @@
         .iterm2_themes = .{
             .url = "https://deps.files.ghostty.org/ghostty-themes-release-20260831-151010-752a9c0.tgz",
             .hash = "N-V-__8AAEFmBABuDGOKxAI6VMg41b9euMZ-z7HS9EcUdaor",
+            .lazy = true,
+        },
+        .vulkan_headers = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.321.tar.gz",
+            .hash = "N-V-__8AAI7-AQIsx0GGCNZVZDEQ-EhVjVd915WjwOOiSSA-",
             .lazy = true,
         },
     },
