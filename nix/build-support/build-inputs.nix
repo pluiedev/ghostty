@@ -7,6 +7,8 @@
 }:
 [
   pkgs.libGL
+  pkgs.vulkan-loader
+  pkgs.vulkan-validation-layers
 ]
 ++ lib.optionals stdenv.hostPlatform.isLinux [
   pkgs.bzip2
