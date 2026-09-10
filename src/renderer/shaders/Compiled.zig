@@ -392,7 +392,7 @@ fn reflectBinding(param: *slang.VariableLayoutReflection) !Compiled.Binding {
         } },
 
         // OpenGL and Vulkan instead use unified descriptor slot indices.
-        .opengl => desc: {
+        .opengl, .vulkan => desc: {
             const index = param.getBindingIndex();
             if (index < 0) return error.NoBinding;
             break :desc .{ .descriptor = @intCast(index) };
