@@ -6,6 +6,7 @@ const math = @import("../../math.zig");
 const global = @import("../../global.zig");
 
 const mtl = @import("api.zig");
+const shadertoy = @import("../shadertoy.zig");
 const Pipeline = @import("Pipeline.zig");
 
 const log = std.log.scoped(.metal);

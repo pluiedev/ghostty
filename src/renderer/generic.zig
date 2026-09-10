@@ -849,7 +849,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const arena_alloc = arena.allocator();
 
             // Load our custom shaders
-            const custom_shaders: []const [:0]const u8 = shadertoy.loadFromFiles(
+            const custom_shaders = shadertoy.loadFromFiles(
                 global.io(),
                 arena_alloc,
                 self.config.custom_shaders,

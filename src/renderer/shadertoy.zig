@@ -39,7 +39,18 @@ pub const Uniforms = extern struct {
 };
 
 /// The target to load shaders for.
-pub const Target = enum { glsl, msl };
+pub const Target = enum {
+    glsl,
+    msl,
+    spirv,
+
+    pub fn Type(comptime self: Target) type {
+        return switch (self) {
+            .glsl, .msl => [:0]const u8,
+            .spirv => []const u32,
+        };
+    }
+};
 
 /// A Slang session for compiling Shadertoy shaders to a single target
 /// language. A session is not thread-safe and creating one isn't cheap, so
@@ -66,7 +77,7 @@ pub const Session = struct {
         };
 
         const target_options: []const slang.CompilerOptionEntry = switch (target) {
-            .glsl => &.{},
+            .glsl, .spirv => &.{},
             // Vertex buffer is hardcoded at register 0 on Metal.
             .msl => &.{slang.CompilerOptionEntry.vulkanBindShift(0, .buffer, 1)},
         };
@@ -75,6 +86,7 @@ pub const Session = struct {
             .format = switch (target) {
                 .glsl => .glsl,
                 .msl => .metal,
+                .spirv => .spirv,
             },
             .compiler_option_entries = if (target_options.len > 0) target_options.ptr else null,
             .compiler_option_entry_count = @intCast(target_options.len),
@@ -131,12 +143,12 @@ pub fn loadFromFiles(
     io: std.Io,
     alloc_gpa: Allocator,
     paths: configpkg.RepeatablePath,
-    target: Target,
-) ![]const [:0]const u8 {
+    comptime target: Target,
+) ![]const target.Type() {
     var session: Session = try .init(target);
     defer session.deinit();
 
-    var list: std.ArrayList([:0]const u8) = .empty;
+    var list: std.ArrayList(target.Type()) = .empty;
     defer list.deinit(alloc_gpa);
     errdefer for (list.items) |shader| alloc_gpa.free(shader);
 
@@ -173,7 +185,8 @@ pub fn loadFromFile(
     alloc: Allocator,
     path: []const u8,
     session: *const Session,
-) ![:0]const u8 {
+    comptime target: Target,
+) !target.Type() {
     // Load the shader file
     const cwd = std.Io.Dir.cwd();
     const file = try cwd.openFile(io, path, .{});
@@ -239,8 +252,8 @@ test "shadertoy to glsl" {
     var session: Session = try .init(.glsl);
     defer session.deinit();
 
-    const glsl = try session.compile(alloc, src, null);
-    defer alloc.free(glsl);
+    const glsl = try session.compile(src, null);
+    defer glsl.release();
 
     // Sanity check that we actually compiled to GLSL.
     try testing.expect(std.mem.find(u8, glsl.getBuffer(), "#version") != null);
@@ -262,6 +275,30 @@ test "shadertoy to msl" {
 
     // Sanity check that we actually compiled to Metal.
     try testing.expect(std.mem.find(u8, msl.getBuffer(), "metal_stdlib") != null);
+}
+
+test "shadertoy to spir-v" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var shader: std.Io.Reader = .fixed(test_crt);
+    const src = try glslFromShader(alloc, &shader);
+    defer alloc.free(src);
+
+    var session: Session = try .init(.spirv);
+    defer session.deinit();
+
+    const spirv = try session.compile(src, null);
+    defer spirv.release();
+
+    // Sanity check that we actually compiled to SPIR-V.
+    //
+    // Slang actually doesn't define the endianness of the output SPIR-V
+    // module, and neither does SPIR-V itself. Instead, the only requirement
+    // is that the emitted bytes can be reinterpreted as native 32-bit words
+    // (see SPIR-V Specification §3.1).
+    const magic = std.mem.readInt(u32, spirv.getBuffer()[0..4], .native);
+    try testing.expectEqual(0x07230203, magic);
 }
 
 test "shadertoy invalid" {
