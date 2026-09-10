@@ -17,6 +17,7 @@ pub const Backend = @import("renderer/backend.zig").Backend;
 pub const GenericRenderer = @import("renderer/generic.zig").Renderer;
 pub const Metal = @import("renderer/Metal.zig");
 pub const OpenGL = @import("renderer/OpenGL.zig");
+pub const Vulkan = @import("renderer/Vulkan.zig");
 pub const Options = @import("renderer/Options.zig");
 pub const Overlay = @import("renderer/Overlay.zig");
 pub const Thread = @import("renderer/Thread.zig");
@@ -39,6 +40,7 @@ pub const Renderer = GenericRenderer(GraphicsAPI);
 const GraphicsAPI = switch (build_config.renderer) {
     .metal => Metal,
     .opengl => OpenGL,
+    .vulkan => Vulkan,
 };
 
 /// The app-scoped render device from which surface-scoped renderers

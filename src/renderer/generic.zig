@@ -296,12 +296,45 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             pub fn init(api: GraphicsAPI, custom_shaders: bool) !SwapChain {
                 var result: SwapChain = .{ .frames = undefined };
 
-                // Initialize all of our frame state.
+                // Phase 1: allocate the API-specific state for all of
+                // our frame states in one go. This lets the API batch
+                // what would otherwise be per-frame allocations (on
+                // Vulkan this allocates every descriptor set for every
+                // frame state with a single driver call).
+                try result.initFrameStateApi(api);
+                errdefer result.deinitFrameStateApi();
+
+                // Phase 2: initialize each frame state individually.
+                var initialized: usize = 0;
+                errdefer for (result.frames[0..initialized]) |*frame| {
+                    frame.deinit();
+                };
                 for (&result.frames) |*frame| {
-                    frame.* = try FrameState.init(api, custom_shaders);
+                    try frame.init(api, custom_shaders);
+                    initialized += 1;
                 }
 
                 return result;
+            }
+
+            /// Allocate the API-specific state of all our frame states
+            /// in one go and move it into the frame states.
+            fn initFrameStateApi(self: *SwapChain, api: GraphicsAPI) !void {
+                if (FrameState.Api != void) {
+                    const states = try GraphicsAPI.initFrameStates(api);
+                    for (&self.frames, &states) |*frame, *state| {
+                        frame.api_state = state.*;
+                    }
+                }
+            }
+
+            /// Deinitialize the API-specific state of all our frame
+            /// states. This must only be done once per state: the
+            /// generic part of a frame state does not own its API state.
+            fn deinitFrameStateApi(self: *SwapChain) void {
+                if (FrameState.Api != void) {
+                    for (&self.frames) |*frame| frame.api_state.deinit();
+                }
             }
 
             pub fn deinit(self: *SwapChain) void {
@@ -311,6 +344,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     global.io(),
                 );
                 for (&self.frames) |*frame| frame.deinit();
+                self.deinitFrameStateApi();
             }
 
             /// Get the next frame state to draw to. This will wait on the
@@ -337,7 +371,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// reports that the frame is complete.
         ///
         /// This is used to implement double/triple buffering.
+        ///
+        /// Initialization happens in two phases: the API-specific state
+        /// (`api`) of all frame states is allocated in one go when the swap
+        /// chain is created, then each frame state is initialized
+        /// individually with `init`.
         const FrameState = struct {
+            /// API-specific state, allocated for all frame states in one
+            /// go by the swap chain (see `SwapChain.initFrameStateApi`) and
+            /// deinitialized by it as well. This is `void` if the API
+            /// doesn't have any frame-specific state.
+            const Api = if (@hasDecl(GraphicsAPI, "FrameState"))
+                GraphicsAPI.FrameState
+            else
+                void;
+
             uniforms: UniformBuffer,
             cells: CellTextBuffer,
             cells_bg: CellBgBuffer,
@@ -362,17 +410,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             /// Custom shader state, this is null if we have no custom shaders.
             custom_shader_state: ?CustomShaderState = null,
 
+            api_state: Api,
+
             const UniformBuffer = Buffer(shaderpkg.Uniforms);
             const CellBgBuffer = Buffer(shaderpkg.CellBg);
             const CellTextBuffer = Buffer(shaderpkg.CellText);
             const BgImageBuffer = Buffer(shaderpkg.BgImage);
 
-            pub fn init(api: GraphicsAPI, custom_shaders: bool) !FrameState {
+            /// Initialize this frame state in place. Our API-specific
+            /// state must already be allocated (see `SwapChain`).
+            pub fn init(self: *FrameState, api: GraphicsAPI, custom_shaders: bool) !void {
                 // Uniform buffer contains exactly 1 uniform struct. The
                 // uniform data will be undefined so this must be set before
                 // a frame is drawn.
-                var uniforms = try UniformBuffer.init(api.uniformBufferOptions(), 1);
-                errdefer uniforms.deinit();
+                self.uniforms = try UniformBuffer.init(api.uniformBufferOptions(), 1);
+                errdefer self.uniforms.deinit();
 
                 // Create GPU buffers for our cells.
                 //
@@ -380,58 +432,56 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // too small, but they will be resized as needed. This is a bit
                 // wasteful but since it's a one-time thing it's not really a
                 // huge concern.
-                var cells = try CellTextBuffer.init(api.fgBufferOptions(), 1);
-                errdefer cells.deinit();
-                var cells_bg = try CellBgBuffer.init(api.bgBufferOptions(), 1);
-                errdefer cells_bg.deinit();
+                self.cells = try CellTextBuffer.init(api.fgBufferOptions(), 1);
+                errdefer self.cells.deinit();
+                self.cells_bg = try CellBgBuffer.init(api.bgBufferOptions(), 1);
+                errdefer self.cells_bg.deinit();
 
                 // Create a GPU buffer for our background image info.
-                var bg_image_buffer = try BgImageBuffer.init(
+                self.bg_image_buffer = try BgImageBuffer.init(
                     api.bgImageBufferOptions(),
                     1,
                 );
-                errdefer bg_image_buffer.deinit();
+                errdefer self.bg_image_buffer.deinit();
 
                 // Initialize our textures for our font atlas.
                 //
                 // As with the buffers above, we start these off as small
                 // as possible since they'll inevitably be resized anyway.
-                const grayscale = try api.initAtlasTexture(&.{
+                self.grayscale = try api.initAtlasTexture(&.{
                     .data = undefined,
                     .size = 1,
                     .format = .grayscale,
                 });
-                errdefer grayscale.deinit();
-                const color = try api.initAtlasTexture(&.{
+                errdefer self.grayscale.deinit();
+                self.color = try api.initAtlasTexture(&.{
                     .data = undefined,
                     .size = 1,
                     .format = .bgra,
                 });
-                errdefer color.deinit();
+                errdefer self.color.deinit();
 
-                var custom_shader_state =
+                self.custom_shader_state =
                     if (custom_shaders)
                         try CustomShaderState.init(api)
                     else
                         null;
-                errdefer if (custom_shader_state) |*state| state.deinit();
+                errdefer if (self.custom_shader_state) |*state| state.deinit();
 
                 // Initialize the target. Just as with the other resources,
                 // start it off as small as we can since it'll be resized.
-                const target = try api.initTarget(1, 1);
+                self.target = try api.initTarget(1, 1);
 
-                return .{
-                    .uniforms = uniforms,
-                    .cells = cells,
-                    .cells_bg = cells_bg,
-                    .bg_image_buffer = bg_image_buffer,
-                    .grayscale = grayscale,
-                    .color = color,
-                    .target = target,
-                    .custom_shader_state = custom_shader_state,
-                };
+                // Everything starts out unmodified.
+                self.grayscale_modified = 0;
+                self.color_modified = 0;
+                self.target_config_modified = 0;
+                self.bg_image_buffer_modified = 0;
             }
 
+            /// Deinitialize the generic part of this frame state. The
+            /// API-specific state (`api_state`) is owned (allocated and
+            /// deinitialized) by the swap chain.
             pub fn deinit(self: *FrameState) void {
                 self.target.deinit();
                 self.uniforms.deinit();
@@ -695,7 +745,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             );
             errdefer api.deinit();
 
-            const has_custom_shaders = options.config.custom_shaders.value.items.len > 0;
+            const has_custom_shaders =
+                options.config.custom_shaders.value.items.len > 0;
 
             // Create the font shaper.
             var font_shaper = try font.Shaper.init(alloc, .{
@@ -849,7 +900,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const arena_alloc = arena.allocator();
 
             // Load our custom shaders
-            const custom_shaders: []const [:0]const u8 = shadertoy.loadFromFiles(
+            const custom_shaders = shadertoy.loadFromFiles(
                 arena_alloc,
                 self.config.custom_shaders,
                 GraphicsAPI.custom_shader_target,
@@ -1760,7 +1811,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             if (self.reinitialize_shaders) {
                 self.reinitialize_shaders = false;
                 self.shaders.deinit(self.alloc);
-                try self.initShaders();
+                self.initShaders() catch |err| {
+                    // Flag for reinitialization again so that we retry
+                    // on the next frame, since our shaders are defunct
+                    // now and can't be drawn with.
+                    self.reinitialize_shaders = true;
+                    return err;
+                };
             }
 
             // Our shaders should not be defunct at this point.
@@ -1847,8 +1904,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 try self.syncAtlasTexture(&self.font_grid.atlas_color, &frame.color);
             }
 
-            // Get a frame context from the graphics API.
-            var frame_ctx = try self.api.beginFrame(self, &frame.target);
+            // Get a frame context from the graphics API, passing it our
+            // API-specific frame state if we have any so that it can use
+            // it (e.g. for recycled descriptor sets).
+            var frame_ctx = try if (FrameState.Api == void)
+                self.api.beginFrame(self, &frame.target)
+            else
+                self.api.beginFrame(self, &frame.api_state, &frame.target);
             defer frame_ctx.complete(sync);
 
             {
