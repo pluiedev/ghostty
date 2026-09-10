@@ -42,16 +42,31 @@ pub const Uniforms = extern struct {
 };
 
 /// The target to load shaders for.
-pub const Target = enum { glsl, msl };
+pub const Target = enum {
+    glsl,
+    msl,
+    spv,
 
-/// Load a set of shaders from files and convert them to the target
-/// format. The shader order is preserved.
+    /// The underlying type of shader data for the given target.
+    ///
+    /// GLSL and MSL use NUL-terminated source code while SPIR-V is represented
+    /// by a list of 32-bit words.
+    pub fn DataType(comptime target: Target) type {
+        return switch (target) {
+            .glsl, .msl => [:0]const u8,
+            .spv => []const u32,
+        };
+    }
+};
+
+/// Load a set of shaders for the given target and convert them to the
+/// target format. The shader order is preserved.
 pub fn loadFromFiles(
     alloc_gpa: Allocator,
     paths: configpkg.RepeatablePath,
-    target: Target,
-) ![]const [:0]const u8 {
-    var list: std.ArrayList([:0]const u8) = .empty;
+    comptime target: Target,
+) ![]target.DataType() {
+    var list: std.ArrayList(target.DataType()) = .empty;
     defer list.deinit(alloc_gpa);
     errdefer for (list.items) |shader| alloc_gpa.free(shader);
 
@@ -75,13 +90,13 @@ pub fn loadFromFiles(
     return try list.toOwnedSlice(alloc_gpa);
 }
 
-/// Load a single shader from a file and convert it to the target language
-/// ready to be used with renderers.
+/// Load a single shader from a file and convert it to the target
+/// format ready to be used with renderers.
 pub fn loadFromFile(
     alloc_gpa: Allocator,
     path: []const u8,
-    target: Target,
-) ![:0]const u8 {
+    comptime target: Target,
+) !target.DataType() {
     var arena = ArenaAllocator.init(alloc_gpa);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -108,11 +123,10 @@ pub fn loadFromFile(
     };
 
     // Convert to SPIR-V
-    const spirv: []const u8 = spirv: {
-        var stream: std.Io.Writer.Allocating = .init(alloc);
+    const spirv: []const u32 = spirv: {
         var errlog: SpirvLog = .{ .alloc = alloc };
         defer errlog.deinit();
-        spirvFromGlsl(&stream.writer, &errlog, glsl) catch |err| {
+        break :spirv spirvFromGlsl(alloc, &errlog, glsl) catch |err| {
             if (errlog.info.len > 0 or errlog.debug.len > 0) {
                 log.warn("spirv error path={s} info={s} debug={s}", .{
                     path,
@@ -123,20 +137,14 @@ pub fn loadFromFile(
 
             return err;
         };
-
-        // SpirV pointer must be aligned to 4 bytes since we expect
-        // a slice of words.
-        var list: std.ArrayListAligned(u8, .of(u32)) = .empty;
-        try list.appendSlice(alloc, stream.written());
-        break :spirv list.items;
     };
 
-    // Convert to MSL
+    // Important: using the alloc_gpa here on purpose because this
+    // is the final result that will be returned to the caller.
     return switch (target) {
-        // Important: using the alloc_gpa here on purpose because this
-        // is the final result that will be returned to the caller.
         .glsl => try glslFromSpv(alloc_gpa, spirv),
         .msl => try mslFromSpv(alloc_gpa, spirv),
+        .spv => try alloc_gpa.dupe(u32, spirv),
     };
 }
 
@@ -153,12 +161,13 @@ pub fn glslFromShader(writer: *std.Io.Writer, src: []const u8) !void {
     try writer.writeAll(src);
 }
 
-/// Convert a GLSL shader into SPIR-V assembly.
+/// Compile a GLSL shader into SPIR-V. The result is an array of
+/// SPIR-V words, allocated with `alloc`.
 pub fn spirvFromGlsl(
-    writer: *std.Io.Writer,
+    alloc: Allocator,
     errlog: ?*SpirvLog,
     src: [:0]const u8,
-) !void {
+) ![]const u32 {
     // So we can run unit tests without fear.
     if (builtin.is_test) try glslang.testing.ensureInit();
 
@@ -204,9 +213,7 @@ pub fn spirvFromGlsl(
     program.spirvGenerate(c.GLSLANG_STAGE_FRAGMENT);
     const size = program.spirvGetSize();
     const ptr = try program.spirvGetPtr();
-    const ptr_u8: [*]u8 = @ptrCast(ptr);
-    const slice_u8: []u8 = ptr_u8[0 .. size * 4];
-    try writer.writeAll(slice_u8);
+    return try alloc.dupe(u32, ptr[0..size]);
 }
 
 /// Retrieve errors from spirv compilation.
@@ -240,7 +247,7 @@ pub const SpirvLog = struct {
 };
 
 /// Convert SPIR-V binary to MSL.
-pub fn mslFromSpv(alloc: Allocator, spv: []const u8) ![:0]const u8 {
+pub fn mslFromSpv(alloc: Allocator, spv: []const u32) ![:0]const u8 {
     const c = spvcross.c;
     return try spvCross(alloc, spvcross.c.SPVC_BACKEND_MSL, spv, (struct {
         fn setOptions(options: c.spvc_compiler_options) error{SpvcFailed}!void {
@@ -258,7 +265,7 @@ pub fn mslFromSpv(alloc: Allocator, spv: []const u8) ![:0]const u8 {
 }
 
 /// Convert SPIR-V binary to GLSL.
-pub fn glslFromSpv(alloc: Allocator, spv: []const u8) ![:0]const u8 {
+pub fn glslFromSpv(alloc: Allocator, spv: []const u32) ![:0]const u8 {
     const GLSL_VERSION = 430;
 
     const c = spvcross.c;
@@ -278,12 +285,9 @@ pub fn glslFromSpv(alloc: Allocator, spv: []const u8) ![:0]const u8 {
 fn spvCross(
     alloc: Allocator,
     backend: spvcross.c.spvc_backend,
-    spv: []const u8,
+    spv: []const u32,
     comptime optionsFn_: ?*const fn (c: spvcross.c.spvc_compiler_options) error{SpvcFailed}!void,
 ) ![:0]const u8 {
-    // Spir-V is always a multiple of 4 because it is written as a series of words
-    if (@mod(spv.len, 4) != 0) return error.SpirvInvalid;
-
     // Compiler context
     const c = spvcross.c;
     var ctx: c.spvc_context = undefined;
@@ -303,8 +307,8 @@ fn spvCross(
     var ir: c.spvc_parsed_ir = undefined;
     if (c.spvc_context_parse_spirv(
         ctx,
-        @ptrCast(@alignCast(spv.ptr)),
-        spv.len / 4,
+        spv.ptr,
+        spv.len,
         &ir,
     ) != c.SPVC_SUCCESS) {
         return error.SpvcFailed;
@@ -361,9 +365,8 @@ test "spirv" {
     const src = try testGlslZ(alloc, test_crt);
     defer alloc.free(src);
 
-    var buf: [4096 * 4]u8 = undefined;
-    var writer: std.Io.Writer = .fixed(&buf);
-    try spirvFromGlsl(&writer, null, src);
+    const spirv = try spirvFromGlsl(alloc, null, src);
+    defer alloc.free(spirv);
 }
 
 test "spirv invalid" {
@@ -373,12 +376,12 @@ test "spirv invalid" {
     const src = try testGlslZ(alloc, test_invalid);
     defer alloc.free(src);
 
-    var buf: [4096 * 4]u8 = undefined;
-    var writer: std.Io.Writer = .fixed(&buf);
-
     var errlog: SpirvLog = .{ .alloc = alloc };
     defer errlog.deinit();
-    try testing.expectError(error.GlslangFailed, spirvFromGlsl(&writer, &errlog, src));
+    try testing.expectError(
+        error.GlslangFailed,
+        spirvFromGlsl(alloc, &errlog, src),
+    );
     try testing.expect(errlog.info.len > 0);
 }
 
@@ -389,16 +392,10 @@ test "shadertoy to msl" {
     const src = try testGlslZ(alloc, test_crt);
     defer alloc.free(src);
 
-    var buf: std.Io.Writer.Allocating = .init(alloc);
-    defer buf.deinit();
-    try spirvFromGlsl(&buf.writer, null, src);
+    const spirv = try spirvFromGlsl(alloc, null, src);
+    defer alloc.free(spirv);
 
-    // TODO: Replace this with an aligned version of Writer.Allocating
-    var spvlist: std.ArrayListAligned(u8, .of(u32)) = .empty;
-    defer spvlist.deinit(alloc);
-    try spvlist.appendSlice(alloc, buf.written());
-
-    const msl = try mslFromSpv(alloc, spvlist.items);
+    const msl = try mslFromSpv(alloc, spirv);
     defer alloc.free(msl);
 }
 
@@ -409,16 +406,10 @@ test "shadertoy to glsl" {
     const src = try testGlslZ(alloc, test_crt);
     defer alloc.free(src);
 
-    var buf: std.Io.Writer.Allocating = .init(alloc);
-    defer buf.deinit();
-    try spirvFromGlsl(&buf.writer, null, src);
+    const spirv = try spirvFromGlsl(alloc, null, src);
+    defer alloc.free(spirv);
 
-    // TODO: Replace this with an aligned version of Writer.Allocating
-    var spvlist: std.ArrayListAligned(u8, .of(u32)) = .empty;
-    defer spvlist.deinit(alloc);
-    try spvlist.appendSlice(alloc, buf.written());
-
-    const glsl = try glslFromSpv(alloc, spvlist.items);
+    const glsl = try glslFromSpv(alloc, spirv);
     defer alloc.free(glsl);
 
     // log.warn("glsl={s}", .{glsl});
