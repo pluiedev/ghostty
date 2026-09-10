@@ -78,6 +78,10 @@
   wayland,
   wayland-scanner,
   wayland-protocols,
+  vulkan-headers,
+  vulkan-loader,
+  vulkan-extension-layer,
+  vulkan-validation-layers,
   zon2nix,
   pkgs,
   # needed by GTK for loading SVG icons while running from within the
@@ -197,6 +201,9 @@ in
         libXinerama
         libXrandr
 
+        vulkan-loader
+        vulkan-validation-layers
+
         # Only needed for GTK builds
         gtk4-layer-shell
         glib
@@ -222,8 +229,17 @@ in
 
     # This should be set onto the rpath of the ghostty binary if you want
     # it to be "portable" across the system.
-    LD_LIBRARY_PATH = ld_library_path;
-    GI_TYPELIB_PATH = gi_typelib_path;
+    env = {
+      LD_LIBRARY_PATH = ld_library_path;
+      GI_TYPELIB_PATH = gi_typelib_path;
+
+      VULKAN_SDK = "${vulkan-headers}";
+
+      VK_ADD_LAYER_PATH = pkgs.lib.makeSearchPath "share/vulkan/explicit_layer.d" [
+        vulkan-validation-layers
+        vulkan-extension-layer
+      ];
+    };
 
     shellHook =
       (lib.optionalString stdenv.hostPlatform.isLinux ''
