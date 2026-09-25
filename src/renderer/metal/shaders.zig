@@ -434,7 +434,8 @@ fn initPostPipeline(
     return try Pipeline.init(null, .{
         .device = device,
         .vertex_fn = "full_screen_vertex",
-        .fragment_fn = "main0",
+        // Slang renames the entry point to main_0
+        .fragment_fn = "main_0",
         .vertex_library = library,
         .fragment_library = post_library,
         .attachments = &.{

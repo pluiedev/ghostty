@@ -43,7 +43,6 @@ layout(binding = 0) uniform sampler2D iChannel0;
 // layout(binding = 2) uniform sampler2D iChannel2;
 // layout(binding = 3) uniform sampler2D iChannel3;
 
-layout(location = 0) in vec4 gl_FragCoord;
 layout(location = 0) out vec4 _fragColor;
 
 #define texture2D texture

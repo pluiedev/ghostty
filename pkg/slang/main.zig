@@ -162,6 +162,13 @@ pub const CompileTarget = enum(i32) {
     _,
 };
 
+pub const Stage = enum(u32) {
+    none = 0,
+    vertex = 1,
+    fragment = 5,
+    _,
+};
+
 pub const TargetFlags = packed struct(u32) {
     _pad0: u4 = 0,
     parameter_blocks_use_register_spaces: bool = false,
@@ -486,10 +493,21 @@ pub const IModule = extern struct {
     /// reflected on).
     pub const link = IComponentType.Mixin(@This()).link;
     pub const findEntryPointByName = IModule.Mixin(@This()).findEntryPointByName;
+    pub const findAndCheckEntryPoint = IModule.Mixin(@This()).findAndCheckEntryPoint;
 
     const VTable = extern struct {
         base: IComponentType.VTable,
         findEntryPointByName: *const fn (this: *IModule, name: [*:0]const u8, out_entry_point: **IComponentType) callconv(mcall) Result,
+        // The following slots must stay in sync with slang.h's IModule; the
+        // ones we don't use are left opaque.
+        getDefinedEntryPointCount: *const anyopaque,
+        getDefinedEntryPoint: *const anyopaque,
+        serialize: *const anyopaque,
+        writeToFile: *const anyopaque,
+        getName: *const anyopaque,
+        getFilePath: *const anyopaque,
+        getUniqueIdentity: *const anyopaque,
+        findAndCheckEntryPoint: *const fn (this: *IModule, name: [*:0]const u8, stage: Stage, out_entry_point: **IComponentType, out_diagnostics: ?**IBlob) callconv(mcall) Result,
     };
 
     fn Mixin(comptime T: type) type {
@@ -500,6 +518,21 @@ pub const IModule = extern struct {
                 const vtable: *const VTable = @ptrCast(self.vtable);
                 var entry_point: *IComponentType = undefined;
                 try vtable.findEntryPointByName(@ptrCast(self), name, &entry_point).check();
+                return entry_point;
+            }
+
+            /// Find and validate an entry point by name, even if it isn't
+            /// marked with a `[shader("...")]` attribute (e.g. a GLSL
+            /// `main`).
+            pub fn findAndCheckEntryPoint(
+                self: *T,
+                name: [*:0]const u8,
+                stage: Stage,
+                out_diagnostics: ?**IBlob,
+            ) !*IComponentType {
+                const vtable: *const VTable = @ptrCast(self.vtable);
+                var entry_point: *IComponentType = undefined;
+                try vtable.findAndCheckEntryPoint(@ptrCast(self), name, stage, &entry_point, getDiagnosticsPtr(out_diagnostics)).check();
                 return entry_point;
             }
         };
