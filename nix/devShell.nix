@@ -38,7 +38,6 @@
   fontconfig,
   freetype,
   glib,
-  glslang,
   gtk4,
   gtk4-layer-shell,
   gobject-introspection,
@@ -59,7 +58,6 @@
   libXinerama,
   libXrandr,
   libxml2,
-  spirv-cross,
   simdutf,
   zlib,
   alejandra,
@@ -185,9 +183,7 @@ in
         simdutf
         zlib
 
-        glslang
-        spirv-cross
-
+        shader-slang
         libglvnd
         libxkbcommon
         libX11

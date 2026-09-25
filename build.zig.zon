@@ -83,9 +83,7 @@
         .zlib = .{ .path = "./pkg/zlib", .lazy = true },
 
         // Shader translation
-        .glslang = .{ .path = "./pkg/glslang", .lazy = true },
         .slang = .{ .path = "./pkg/slang" },
-        .spirv_cross = .{ .path = "./pkg/spirv-cross", .lazy = true },
 
         // Wayland
         .wayland = .{

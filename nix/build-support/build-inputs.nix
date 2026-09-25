@@ -20,8 +20,7 @@
   pkgs.simdutf
   pkgs.zlib
 
-  pkgs.glslang
-  pkgs.spirv-cross
+  pkgs.shader-slang
 
   pkgs.libxkbcommon
 

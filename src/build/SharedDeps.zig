@@ -346,45 +346,20 @@ pub fn add(
         }
     }
 
-    // Glslang
-    if (b.lazyDependency("glslang", .{
-        .target = target,
-        .optimize = optimize,
-    })) |glslang_dep| {
-        step.root_module.addImport("glslang", glslang_dep.module("glslang"));
-        if (b.systemIntegrationOption("glslang", .{})) {
-            step.root_module.linkSystemLibrary("glslang", dynamic_link_opts);
-            step.root_module.linkSystemLibrary(
-                "glslang-default-resource-limits",
-                dynamic_link_opts,
-            );
-        } else {
-            step.root_module.linkLibrary(glslang_dep.artifact("glslang"));
-            try static_libs.append(
-                b.allocator,
-                glslang_dep.artifact("glslang").getEmittedBin(),
-            );
-        }
-    }
-
-    // Spirv-cross
-    if (b.lazyDependency("spirv_cross", .{
-        .target = target,
-        .optimize = optimize,
-    })) |spirv_cross_dep| {
-        step.root_module.addImport(
-            "spirv_cross",
-            spirv_cross_dep.module("spirv_cross"),
-        );
-        if (b.systemIntegrationOption("spirv-cross", .{})) {
-            step.root_module.linkSystemLibrary("spirv-cross-c-shared", dynamic_link_opts);
-        } else {
-            step.root_module.linkLibrary(spirv_cross_dep.artifact("spirv_cross"));
-            try static_libs.append(
-                b.allocator,
-                spirv_cross_dep.artifact("spirv_cross").getEmittedBin(),
-            );
-        }
+    // Slang: used at runtime to compile ShaderToy GLSL into SPIR-V.
+    //
+    // NOTE: This links the system libslang. Unlike the build-time use of
+    // Slang (which runs on the host), this is a dependency of the shipped
+    // binary, so it needs to be available/bundled for distribution.
+    {
+        const slang_mod = b.createModule(.{
+            .root_source_file = b.path("pkg/slang/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        slang_mod.linkSystemLibrary("slang", dynamic_link_opts);
+        step.root_module.addImport("slang", slang_mod);
     }
 
     // Sentry

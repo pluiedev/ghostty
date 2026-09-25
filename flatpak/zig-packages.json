@@ -37,12 +37,6 @@
   },
   {
     "type": "archive",
-    "url": "https://deps.files.ghostty.org/glslang-12201278a1a05c0ce0b6eb6026c65cd3e9247aa041b1c260324bf29cee559dd23ba1.tar.gz",
-    "dest": "vendor/p/N-V-__8AABzkUgISeKGgXAzgtutgJsZc0-kkeqBBscJgMkvy",
-    "sha256": "14a2edbb509cb3e51a9a53e3f5e435dbf5971604b4b833e63e6076e8c0a997b5"
-  },
-  {
-    "type": "archive",
     "url": "https://deps.files.ghostty.org/gobject-2026-07-28-36-1.tar.zst",
     "dest": "vendor/p/gobject-0.3.2-Skun7F6HogCMynX2JqeSHS7xr-8pK4ob-qRFIcEasVi3",
     "sha256": "9014db570db06e3fbfcfadb7b32aa8addacc6969e701650683c1c74428adba6c"
@@ -130,12 +124,6 @@
     "url": "https://deps.files.ghostty.org/sentry-1220446be831adcca918167647c06c7b825849fa3fba5f22da394667974537a9c77e.tar.gz",
     "dest": "vendor/p/N-V-__8AAPlZGwBEa-gxrcypGBZ2R8Bse4JYSfo_ul8i2jlG",
     "sha256": "2ac6497cc8d61a8d31093e47addb8c9b2c45b16b0705bb334a835b6423c318df"
-  },
-  {
-    "type": "archive",
-    "url": "https://deps.files.ghostty.org/spirv_cross-1220fb3b5586e8be67bc3feb34cbe749cf42a60d628d2953632c2f8141302748c8da.tar.gz",
-    "dest": "vendor/p/N-V-__8AANb6pwD7O1WG6L5nvD_rNMvnSc9Cpg1ijSlTYywv",
-    "sha256": "b52b6fcfc45e7fa69b1f06a1362c155473444e2cc09995556b156c53ba6657e3"
   },
   {
     "type": "archive",
